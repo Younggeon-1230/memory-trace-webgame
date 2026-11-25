@@ -1,0 +1,26 @@
+:root {
+  --bg: #0a1014;
+  --panel: #0c1318;
+  --ink: #f0ede6;
+  --muted-light: #a8afb1;
+  --muted: #727c80;
+  --accent: #caa05a;
+  --line: rgba(199, 210, 214, .12);
+  --line-light: rgba(199, 210, 214, .24);
+  --sans: Pretendard, 'Noto Sans KR', 'Segoe UI', sans-serif;
+  --mono: 'IBM Plex Mono', 'Cascadia Code', Consolas, monospace;
+  color: var(--ink);
+  background: var(--bg);
+  font-family: var(--sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { min-width: 320px; margin: 0; background: var(--bg); }
+button, a { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+::selection { color: #10151a; background: var(--accent); }
