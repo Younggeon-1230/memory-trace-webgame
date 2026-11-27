@@ -4,4 +4,8 @@ import { defineConfig } from 'vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  server: {
+    // 백엔드 연결 시(VITE_USE_MOCK=false) /api 요청을 Spring Boot(8080)로 넘긴다
+    proxy: { '/api': 'http://localhost:8080' },
+  },
 })

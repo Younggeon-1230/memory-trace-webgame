@@ -115,7 +115,7 @@ PokéAPI 데이터와 이미지는 개발 단계에서 서버와 DB에 캐시합
 
 ```text
 memory-trace-webgame/
-├─ docs/           # 프로젝트 기획 및 설계 문서
+├─ docs/           # 기획·설계 문서, DB 스키마·샘플 SQL, ERD, API 명세
 ├─ image/          # 사건 현장 이미지 원본
 ├─ backendWork/    # Spring Boot 백엔드
 └─ frontendWork/   # React + Vite 프론트엔드
@@ -138,6 +138,21 @@ npm run dev
 
 개발 서버는 기본적으로 `http://localhost:5173`에서 실행됩니다.
 
+### 임시 서버 모드 (백엔드 없이 실행)
+
+백엔드가 준비되기 전까지 프론트는 브라우저 안의 임시 서버(`src/api/mock/server.ts`)로 동작합니다.
+API 명세(`docs/api_spec.md`)와 같은 응답 구조·판정 규칙을 쓰므로 3개 사건을 끝까지 플레이할 수 있습니다.
+
+- 체험 계정: `detective01` / `pass1234!` (회원가입도 가능)
+- 데이터는 브라우저 localStorage에 저장됩니다.
+
+Spring Boot 서버(8080)에 연결하려면 `frontendWork/.env.development.local` 파일에 아래 한 줄을 넣고 다시 실행합니다.
+`/api` 요청은 Vite proxy가 `http://localhost:8080`으로 넘깁니다.
+
+```bash
+VITE_USE_MOCK=false
+```
+
 ### 빌드 및 검사
 
 ```bash
@@ -152,6 +167,8 @@ npm run lint
 - [x] CASE 03 현장 이미지와 클릭 좌표 확정
 - [x] React + Vite 프로젝트 초기 구성
 - [x] 반응형 메인 및 사건 선택 화면
+- [x] 화면설계서 8개 화면 구현 (메인·로그인·회원가입·사건 목록·게임·용의자 파일·결과·마이페이지)
+- [x] REST API 명세 v0.2와 임시 서버(mock)로 프론트 단독 플레이
 - [ ] Spring Boot 프로젝트 구성
 - [ ] 회원가입·로그인·인가
 - [ ] 사건 목록 및 플레이 세션 생성·재개
