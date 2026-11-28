@@ -21,6 +21,11 @@ public abstract class IntegrationTestSupport {
 
     private static boolean prepared;
 
+    /** commit한 테스트 데이터를 지우기 전에, 지울 바로 그 연결이 테스트 DB인지 확인한다 (9.4). */
+    protected static void verifyTestDatabase(Connection connection) throws SQLException {
+        TestDatabaseGuard.verify(connection);
+    }
+
     /** 동적 속성은 환경 변수나 설정 파일보다 우선하므로 SPRING_DATASOURCE_* 가 있어도 테스트 DB를 쓴다. */
     @DynamicPropertySource
     static void testDatabase(DynamicPropertyRegistry registry) throws SQLException {

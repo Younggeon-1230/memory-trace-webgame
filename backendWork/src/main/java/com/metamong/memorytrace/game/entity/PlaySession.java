@@ -72,4 +72,19 @@ public class PlaySession {
 
     @Column(name = "ended_at")
     private LocalDateTime endedAt;
+
+    /** 새 수사. DB 기본값에 맡기지 않고 모든 값을 채운다 (docs/backend_design.md 3.4 R7). */
+    public static PlaySession start(User user, CaseFile caseFile, int startScore, LocalDateTime startedAt) {
+        PlaySession session = new PlaySession();
+        session.user = user;
+        session.caseFile = caseFile;
+        session.status = SessionStatus.IN_PROGRESS;
+        session.score = startScore;
+        session.wrongExclusionCount = 0;
+        session.accusationCount = 0;
+        session.bonusAwarded = false;
+        session.activeFlag = (byte) 1;
+        session.startedAt = startedAt;
+        return session;
+    }
 }

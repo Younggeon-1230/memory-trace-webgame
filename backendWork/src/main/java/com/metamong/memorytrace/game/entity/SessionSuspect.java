@@ -53,4 +53,14 @@ public class SessionSuspect {
 
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    /** 수사를 시작할 때의 상태. 배제 근거 단서는 없다. */
+    public static SessionSuspect active(PlaySession session, CaseSuspect caseSuspect, LocalDateTime updatedAt) {
+        SessionSuspect suspect = new SessionSuspect();
+        suspect.session = session;
+        suspect.caseSuspect = caseSuspect;
+        suspect.status = SuspectStatus.ACTIVE;
+        suspect.updatedAt = updatedAt;
+        return suspect;
+    }
 }
