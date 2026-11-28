@@ -83,7 +83,7 @@ def secretFilePatterns = [
 ]
 
 // bootJar에 넣어도 되는 설정·리소스 파일(BOOT-INF/classes 기준). 새 파일이 필요하면 여기에 추가한다
-def allowedResources = ['application.yml', 'application-local.yml.example']
+def allowedResources = ['application.yml', 'application-prod.yml', 'application-local.yml.example']
 // 파일이 여럿인 폴더. 이 안에서도 아래의 민감한 이름은 허용하지 않는다
 def allowedResourceFolders = ['static/', 'META-INF/']
 
