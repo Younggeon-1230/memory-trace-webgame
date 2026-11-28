@@ -1,10 +1,15 @@
-# REST API 명세 (초안 v0.2)
+# REST API 명세 (v0.5)
 
+> v0.5 (11/28): 검증되지 않은 사건의 진행 중 세션은 행동을 `409 CASE_UNAVAILABLE`로 차단. `requestId`는 UUID v4만 허용.
+
+> v0.4 (11/28): 배포 CSRF 방식 확정, 오류 코드 `FORBIDDEN` 추가, 사건 공개 조건을 `is_enabled` + `validation_status`로 분리. `[제안]` 항목은 남아 있지 않다.
+> v0.3 (11/28): 설계 검토 결과를 반영해 `[제안]` 항목을 확정. 남은 `[제안]`은 CSRF 처리뿐이다 (`docs/backend_design.md` 12장 D7).
+> 변경: 비밀번호 72바이트 제한, requestId 재사용·재전송 규칙, 오류 코드 `SESSION_IN_PROGRESS`·`INTERNAL_ERROR`, 타임라인은 종료 세션만, 페이지 크기 1~100, 비활성 사건 처리.
 > v0.2 (11/27): 프론트 화면 구현에 맞춰 결과·기록 응답에 caseId/caseCode/title, 틀린 배제 수, 조사한 단서 수 필드 추가.
 > 프론트의 임시 서버 `frontendWork/src/api/mock/server.ts`가 이 명세를 그대로 구현하고 있으니 Spring 구현 때 참고.
 
 > 기준 문서: `docs/project_context.md`, `docs/01_schema.sql`
-> 상태 표시: **[확정]** 이미 합의된 규칙을 API로 옮긴 것 / **[제안]** 이번에 새로 정한 것, 검토 필요
+> 상태 표시: **[확정]** 합의된 규칙
 
 ## 0. 공통 규칙
 
@@ -14,9 +19,21 @@
 - 로그인 필요 API에 비로그인 요청 → `401`
 - 게임 행동 요청(조사·배제·지목)은 `requestId`(UUID v4, 클라이언트 생성) 필수 **[확정]**
   - 같은 `requestId`가 다시 오면 처리하지 않고 저장된 결과를 그대로 반환 (네트워크 재전송 대비)
-- CSRF: 개발 단계에서는 `/api/**` 비활성화, 배포 전 쿠키 기반 CSRF 토큰 적용 여부 결정 **[제안]**
+- CSRF **[확정]**: 토큰을 쓰지 않는다. 개발 프로필은 검사하지 않는다. 운영 프로필은 같은 출처 배포를 전제로 `SameSite=Lax` 쿠키를 쓰고, 상태 변경 요청(`POST`·`PUT`·`PATCH`·`DELETE`)의 `Origin`이 없거나 허용 목록과 다르면 `403 FORBIDDEN`
+- **공개 중인 사건** = `is_enabled = TRUE`이고 `validation_status = 'VALID'` **[확정]**
+- 값이 없는 필드는 `null`로 보낸다. 예외: 행동 응답의 `rebuttalText`, `newClueIds`, `inferredClueIds`, `bonusAwarded`는 해당 없으면 생략 **[확정]**
+- 날짜·시각은 `yyyy-MM-dd'T'HH:mm:ss` (Asia/Seoul, 타임존·소수 초 없음) **[확정]**
 
-### 오류 응답 형식 **[제안]**
+### requestId 규칙 **[확정]**
+
+- UUID **v4** 36자(세 번째 묶음이 `4`로 시작, 네 번째 묶음이 `8`·`9`·`a`·`b`로 시작). 대소문자를 모두 받고 서버는 소문자로 바꿔 저장·비교한다. 형식이 다르면 `400 VALIDATION_ERROR`
+- 클라이언트는 하나의 행동에 `requestId`를 한 번만 만들고, 결과를 알 수 없는 재시도에는 같은 값을 쓴다
+- 저장된 결과를 돌려주기 전에 순서대로 확인한다: ① 경로의 세션 존재(`404`) ② 세션 소유자(`403`) ③ 저장된 행동의 세션·행동 종류·대상 ID(`clueId`, `caseSuspectId`)가 이번 요청과 모두 같음
+- ③이 다르면 `400 VALIDATION_ERROR` "이미 사용된 requestId입니다." 저장된 행동의 내용은 응답에 담지 않는다
+- 재전송 응답의 `state`는 현재 상태이고, 나머지 필드는 처음 응답과 같다. 종료된 세션에서도 재전송은 처리한다
+- 4xx로 끝난 요청은 저장하지 않는다
+
+### 오류 응답 형식 **[확정]**
 
 ```json
 { "code": "SESSION_ENDED", "message": "이미 종료된 수사입니다." }
@@ -27,10 +44,18 @@
 | 400 | `VALIDATION_ERROR` | 입력 형식 오류 (빈 값, 길이 초과, requestId 누락 등) |
 | 400 | `TARGET_NOT_IN_CASE` | 단서·용의자가 세션의 사건에 속하지 않음 |
 | 401 | `UNAUTHORIZED` | 로그인 필요 / 로그인 실패 |
+| 403 | `FORBIDDEN` | 허용되지 않은 요청 (Origin 검사 거절 등). message는 "허용되지 않은 요청입니다."이며 허용 Origin 등 내부 설정은 담지 않음 |
 | 403 | `NOT_SESSION_OWNER` | 다른 회원의 세션 |
-| 404 | `NOT_FOUND` | 사건·세션 없음, 비활성(is_enabled=FALSE) 사건 |
+| 404 | `NOT_FOUND` | 사건·세션 없음, 공개 중이 아닌 사건의 새 수사 시작 |
 | 409 | `LOGIN_ID_TAKEN` | 아이디 중복 |
-| 409 | `SESSION_ENDED` | 세션이 IN_PROGRESS가 아님 |
+| 409 | `SESSION_ENDED` | 세션이 IN_PROGRESS가 아님 (행동 요청) |
+| 409 | `CASE_UNAVAILABLE` | 사건의 검증 상태가 `VALID`가 아니라 조사·배제·지목을 할 수 없음. message는 "지금은 이 사건의 수사를 진행할 수 없습니다. 나중에 다시 확인해 주세요." 검증 상태의 구체적인 값은 알리지 않음 |
+| 409 | `SESSION_IN_PROGRESS` | 진행 중 세션의 결과·행동 타임라인 조회 |
+| 500 | `INTERNAL_ERROR` | 예상하지 못한 서버 오류. 내부 정보는 메시지에 담지 않음 |
+
+- 지원하지 않는 메서드·Content-Type은 `405`/`415` + `VALIDATION_ERROR`
+- 없는 `/api/**` 경로는 HTML이 아닌 JSON `404 NOT_FOUND` (비로그인이면 `401`이 먼저)
+- `NETWORK_ERROR`는 프론트 전용 코드로 서버는 보내지 않는다
 
 ### 게임 행동 결과 3종 **[확정]**
 
@@ -42,8 +67,8 @@
 
 REJECTED는 오류가 아니라 **200 응답 + `result: "REJECTED"`** 로 돌려준다.
 
-> **[제안] 기존 결정과 다른 부분:** 기존 처리 순서에서는 3~7단계 실패를 모두 REJECTED로 기록했다.
-> 이 명세에서는 **3~5단계(소유자·상태·사건 불일치)는 4xx 오류로 응답하고 session_action에 기록하지 않으며**,
+> **[확정]** 처음에는 3~7단계 실패를 모두 REJECTED로 기록하기로 했으나 다음과 같이 바꿨다 (project_context.md에도 반영).
+>  **3~5단계(소유자·상태·사건 불일치)는 4xx 오류로 응답하고 session_action에 기록하지 않으며**,
 > **6~7단계(미수집 단서·ACTIVE 아닌 용의자·중복 행동)만 REJECTED로 기록**한다.
 > 이유: 다른 회원이 보낸 요청이 피해자 세션의 행동 기록에 남는 것을 막고, 프론트가 오류와 게임상 거절을 구분하게 하기 위함.
 
@@ -60,7 +85,7 @@ REJECTED는 오류가 아니라 **200 응답 + `result: "REJECTED"`** 로 돌려
 { "userId": 2, "loginId": "detective01", "nickname": "꼬마탐정", "role": "USER" }
 ```
 
-검증 **[제안]**: loginId 4~30자 영문 소문자·숫자·`_`, password 8~64자, nickname 2~20자. 가입 후 자동 로그인하지 않음.
+검증 **[확정]**: loginId 4~30자 영문 소문자·숫자·`_`, password 8~64자이면서 UTF-8 72바이트 이하(BCrypt 한계), nickname 앞뒤 공백 제거 후 2~20자. 가입 후 자동 로그인하지 않음.
 
 ### `POST /api/auth/login` — 로그인
 
@@ -78,7 +103,8 @@ REJECTED는 오류가 아니라 **200 응답 + `result: "REJECTED"`** 로 돌려
 
 ### `GET /api/cases` — 사건 목록 (로그인 필요)
 
-`is_enabled = TRUE`인 사건만, `display_order` 순서. 정답·진상 정보는 포함하지 않는다.
+공개 중인 사건만, `display_order` 순서. 정답·진상 정보는 포함하지 않는다.
+`playCount`는 종료된 세션 수, `bestScore`·`bestGrade`는 해결(SOLVED)한 세션 기준이며 없으면 `null`.
 
 ```json
 [
@@ -106,7 +132,20 @@ REJECTED는 오류가 아니라 **200 응답 + `result: "REJECTED"`** 로 돌려
 
 - 해당 회원·사건의 IN_PROGRESS 세션이 있으면 그 세션을 반환 → `200`
 - 없으면 새로 만들고 (score 100, 용의자 4명 모두 ACTIVE로 session_suspect 생성) → `201`
-- 동시에 두 번 눌러도 UNIQUE(user_id, case_id, active_flag)가 막아 주므로, 중복 키 예외가 나면 기존 세션을 다시 조회해 `200`으로 반환 **[제안]**
+- 동시에 두 번 눌러도 UNIQUE(user_id, case_id, active_flag)가 막아 주므로, 중복 키 예외가 나면 기존 세션을 다시 조회해 `200`으로 반환 **[확정]**
+- 사건이 없거나 공개 중이 아니면 `404` (진행 중 세션이 있어도 이 API는 404) **[확정]**
+
+### 공개 중이 아닌 사건의 기존 세션 **[확정]**
+
+| 사건 상태 | 새 수사·이어하기 API | 기존 세션 조회 | 조사·배제·지목 | 종료 세션의 결과·타임라인·기록 |
+|---|---|---|---|---|
+| 비공개(`is_enabled = FALSE`) + `VALID` | 404 | 허용 | 허용 | 허용 |
+| `PENDING` 또는 `INVALID` (공개 여부 무관) | 404 | 허용 | `409 CASE_UNAVAILABLE` | 허용 |
+
+- 다시 `VALID`가 되면 별도 조작 없이 진행할 수 있다. 차단된 요청은 기록·감점·상태 변경이 없다
+- 이미 처리한 `requestId`의 재전송은 사건이 `VALID`가 아니게 된 뒤에도 저장된 결과를 돌려준다
+- 진행 중 세션은 사건 목록에 보이지 않을 수 있으며, 마이페이지의 "이어 하기"(`/play/{sessionId}`)로 들어간다
+- 별도의 진행 가능 여부 필드는 GameState에 두지 않는다. 프론트는 `CASE_UNAVAILABLE`을 받으면 행동 버튼을 잠근다
 - 응답 본문은 아래 **게임 상태(GameState)**
 
 ### `GET /api/sessions/{sessionId}` — 게임 상태 조회
@@ -157,7 +196,7 @@ REJECTED는 오류가 아니라 **200 응답 + `result: "REJECTED"`** 로 돌려
 }
 ```
 
-필드별 공개 규칙 **[제안]**
+필드별 공개 규칙 **[확정]**
 
 | 필드 | 규칙 |
 |---|---|
@@ -173,8 +212,8 @@ REJECTED는 오류가 아니라 **200 응답 + `result: "REJECTED"`** 로 돌려
 ## 4. 게임 행동
 
 모든 행동 API 공통:
-- 처리 순서 **[확정]**: requestId 중복 확인 → `play_session` `SELECT … FOR UPDATE` → 소유자 → IN_PROGRESS → 같은 사건 → 수집·ACTIVE 여부 → dedup_key → 판정 → 갱신 → session_action 기록 → commit
-- 응답 공통 필드: `result`, `scoreDelta`, `message`, 그리고 갱신된 `state`(GameState 전체) **[제안]**
+- 처리 순서 **[확정]**: requestId 중복 확인 → `play_session` `SELECT … FOR UPDATE` → 잠금 직후 requestId 재확인 → 소유자 → IN_PROGRESS → 사건 검증 상태 `VALID` → 같은 사건 → 수집·ACTIVE 여부 → dedup_key → 판정 → 갱신 → session_action 기록 → commit
+- 응답 공통 필드: `result`, `scoreDelta`, `message`, 그리고 갱신된 `state`(GameState 전체) **[확정]**
   - 매번 전체 상태를 돌려주면 프론트가 부분 갱신 로직 없이 화면을 다시 그리기만 하면 됨
 
 ### `POST /api/sessions/{sessionId}/investigations` — 현장 조사
@@ -193,7 +232,7 @@ REJECTED는 오류가 아니라 **200 응답 + `result: "REJECTED"`** 로 돌려
 }
 ```
 
-- SCENE 단서만 가능 (INFERENCE 단서 id → `400 TARGET_NOT_IN_CASE`와 같은 취급 **[제안]**)
+- SCENE 단서만 가능 (INFERENCE 단서 id → `400 TARGET_NOT_IN_CASE` **[확정]**)
 - 이미 수집한 단서 → `REJECTED`
 - 수집 직후 서버가 선행 조건을 검사해, 조건이 다 갖춰진 INFERENCE 단서를 자동 수집
   - 자동 수집마다 session_action에 `INFER` / `SUCCESS` / `dedup_key = INF:단서ID` / `request_id = NULL` 기록 **[확정]**
@@ -249,10 +288,11 @@ REJECTED는 오류가 아니라 **200 응답 + `result: "REJECTED"`** 로 돌려
 - 종료 시 `ended_at` 기록, `active_flag = NULL`, 등급 계산
   - S: 감점 없음 + 오답 3명 모두 증거로 배제 / A: 최종 점수 80 이상 / B: 80 미만 / FAILED는 등급 NULL
 - dedup_key `ACC:지목회차` (1 또는 2)
+- 두 번째 지목 실패는 `scoreDelta`가 감점분(-30, 하한 적용)이고 점수는 별도 규칙으로 0이 된다. 따라서 행동의 `scoreDelta` 합과 최종 점수가 다를 수 있다 **[확정]**
 
 ### `GET /api/sessions/{sessionId}/result` — 결과 (종료된 세션만)
 
-IN_PROGRESS면 `409 SESSION_ENDED`가 아니라 `409 SESSION_IN_PROGRESS` **[제안]**
+IN_PROGRESS면 `409 SESSION_ENDED`가 아니라 `409 SESSION_IN_PROGRESS` **[확정]**
 
 ```json
 {
@@ -268,7 +308,7 @@ IN_PROGRESS면 `409 SESSION_ENDED`가 아니라 `409 SESSION_IN_PROGRESS` **[제
 }
 ```
 
-FAILED 세션도 정답·진상을 공개할지 **[제안: 공개]** — 다시 하기 의욕이 떨어질 수 있으면 비공개로 바꿀 수 있음.
+FAILED 세션에서도 정답·진상을 공개한다 **[확정]**
 
 ---
 
@@ -276,7 +316,8 @@ FAILED 세션도 정답·진상을 공개할지 **[제안: 공개]** — 다시 
 
 ### `GET /api/me/sessions?caseId=&page=0&size=10` — 내 플레이 기록
 
-최신순. 진행 중·종료 모두 포함.
+최신순(`sessionId` 내림차순). 진행 중·종료 모두 포함. 비공개 사건의 기록도 포함.
+`page`는 0 이상, `size`는 1~100, `caseId`는 양의 정수. 벗어나면 `400 VALIDATION_ERROR` **[확정]**
 
 ```json
 {
@@ -292,6 +333,8 @@ FAILED 세션도 정답·진상을 공개할지 **[제안: 공개]** — 다시 
 
 ### `GET /api/me/summary` — 사건별 요약
 
+공개 중인 사건 전부(기록이 없어도 포함)와, 내 기록이 있는 비공개 사건. `display_order` 순. 값은 종료된 세션 기준 **[확정]**
+
 ```json
 [
   { "caseId": 3, "caseCode": "CASE03", "title": "들어간 발자국만 있는 창고", "playCount": 4, "solvedCount": 3,
@@ -301,7 +344,8 @@ FAILED 세션도 정답·진상을 공개할지 **[제안: 공개]** — 다시 
 
 ### `GET /api/me/sessions/{sessionId}/actions` — 행동 타임라인
 
-본인 세션만, 종료된 세션만 **[제안]** (진행 중 공개해도 정보 누출은 없지만 화면 단순화를 위해).
+본인 세션만, 종료된 세션만. 진행 중이면 `409 SESSION_IN_PROGRESS` **[확정]**
+(진행 중에 공개하면 REJECTED 기록의 `clueName`으로 아직 수집하지 않은 단서 이름이 드러날 수 있다.)
 
 ```json
 [
@@ -337,11 +381,13 @@ FAILED 세션도 정답·진상을 공개할지 **[제안: 공개]** — 다시 
 
 관리자 API(사건 검증 재실행 등)는 만들지 않는다. 검증기는 서버 시작 시 자동 실행 **[확정]**, 결과는 로그로 확인.
 
-## 7. 검토가 필요한 항목 모음
+## 7. 검토 항목
 
-1. 3~5단계 실패를 REJECTED 기록 대신 4xx 오류로 처리 (위 0장)
-2. 모든 행동 응답에 GameState 전체 포함
-3. 흔적 사전에 단서–규칙 연결을 노출하지 않음
-4. FAILED 세션에서도 정답·진상 공개
-5. 회원가입 입력 길이 규칙
-6. 배포 전 CSRF 처리 방식
+| 항목 | 상태 |
+|---|---|
+| 3~5단계 실패는 REJECTED 기록 대신 4xx 오류 | 확정 |
+| 모든 행동 응답에 GameState 전체 포함 | 확정 |
+| 흔적 사전에 단서–규칙 연결을 노출하지 않음 | 확정 |
+| FAILED 세션에서도 정답·진상 공개 | 확정 |
+| 회원가입 입력 규칙 (72바이트 포함) | 확정 |
+| 배포 시 CSRF 처리 방식 (SameSite=Lax + Origin 검사, `FORBIDDEN`) | 확정 |

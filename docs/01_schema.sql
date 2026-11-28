@@ -63,12 +63,14 @@ CREATE TABLE case_file (
     motive_text        TEXT         NOT NULL,
     twist_text         TEXT         NOT NULL,
     display_order      INT          NOT NULL,
-    is_enabled         BOOLEAN      NOT NULL DEFAULT FALSE,
-    validated_at       DATETIME     NULL,
+    is_enabled         BOOLEAN      NOT NULL DEFAULT FALSE,          -- 수동 공개 여부 (검증기는 바꾸지 않음)
+    validation_status  VARCHAR(10)  NOT NULL DEFAULT 'PENDING',       -- 검증 결과 (검증기만 바꿈)
+    validated_at       DATETIME     NULL,                             -- 마지막 검증 시각
     PRIMARY KEY (case_id),
     UNIQUE KEY uk_case_code (case_code),
     CONSTRAINT fk_case_answer FOREIGN KEY (answer_pokemon_id) REFERENCES pokemon (pokemon_id),
-    CONSTRAINT ck_case_order CHECK (display_order >= 0)
+    CONSTRAINT ck_case_order CHECK (display_order >= 0),
+    CONSTRAINT ck_case_validation CHECK (validation_status IN ('PENDING', 'VALID', 'INVALID'))
 ) ENGINE=InnoDB;
 
 -- 5. 사건별 용의자

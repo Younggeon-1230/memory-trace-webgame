@@ -2,6 +2,10 @@
 
 이 문서는 Claude와 진행한 기획·설계 결과를 정리한 것입니다. 앞으로 이 내용을 기준으로 함께 프로젝트를 진행하려고 합니다. 확정된 내용은 바꾸지 말고, 바꿔야 한다고 판단되면 이유와 함께 제안해 주세요.
 
+> 변경 이력 (2026-11-28, 백엔드 설계 검토 반영): 6장 검증기(검사 정의·추가 검사·결과 반영), 7장 배제 요청 처리 순서와 결과 코드, 9장 일정(추론 자동 생성 시점). 남은 미정 사항은 backend_design.md 12장.
+> 추가 변경 (2026-11-28): 사건의 공개 상태와 검증 상태 분리(6·7장, case_file.validation_status 추가), 현장 이미지 파일명 case0N_scene.webp로 통일(9장).
+> 추가 변경 (2026-11-28): 검증되지 않은 사건의 진행 중 세션 처리(6·7장).
+
 함께 첨부하는 파일
 - erd_final.png : 최종 E-R 다이어그램
 - 01_schema.sql : 테이블 생성 SQL (MariaDB 10.11에서 실행 확인, MySQL 8.0.16 이상 대상)
@@ -138,7 +142,15 @@ C:\PokeWebgame\          ← Git 저장소 최상위, Claude Code는 여기서 �
 
 ## 6. 사건 검증기 (확정)
 
-서버 시작 시와 데이터 동기화 직후 실행. 실패한 사건은 is_enabled = FALSE로 목록에서 숨김.
+서버 시작 시(요청을 받기 전)와 데이터 동기화 직후 실행.
+
+공개 상태와 검증 상태
+- is_enabled: 사람이 정하는 공개 여부. 검증기는 바꾸지 않음
+- validation_status: PENDING(검증 전, 기본값) / VALID / INVALID. 검증기가 기록
+- validated_at: 마지막 검증 시각 (VALID·INVALID 모두)
+- 사건 목록 노출과 새 수사 시작 조건: is_enabled = TRUE 이고 validation_status = VALID
+- 예상된 데이터 위반은 INVALID. 검증 중 예상하지 못한 예외가 나면 어떤 사건의 상태도 바꾸지 않고 서버 시작을 실패시킴
+- 진행 중 세션: 사람이 비공개한 VALID 사건은 계속 플레이 가능. PENDING·INVALID 사건은 조회만 가능하고 조사·배제·지목은 409 CASE_UNAVAILABLE(구체적인 검증 상태는 알리지 않음). 종료 세션의 결과·기록은 항상 허용. 다시 VALID가 되면 진행 재개
 
 A. 데이터 무결성 (먼저 실행)
 1. 용의자 정확히 4명
@@ -148,15 +160,18 @@ A. 데이터 무결성 (먼저 실행)
 5. 선행 조건 순환 없음 (DAG)
 6. SCENE 단서는 클릭 좌표 존재
 7. INFERENCE 단서는 클릭 좌표 NULL
-8. condition_type·condition_value 유효
+8. condition_type·condition_value 유효 (NOT_TRAIT은 is_judgment = TRUE인 특징만 유효)
+9. INFERENCE 단서는 선행 조건 1개 이상
+10. SCENE 단서는 선행 조건 없음
+11. 클릭 영역이 이미지 안에 있음 (area_x + area_w ≤ 1, area_y + area_h ≤ 1)
 
 B. 사건 논리 (A 통과 사건만)
-1. 정답 유일성
+1. 정답 유일성: 모든 규칙을 적용하면 남는 용의자가 정답 1명
 2. 단일 단서 결정 금지 (단서 하나로 오답 3명 동시 배제 금지)
 3. 오답마다 배제 근거 존재
-4. 정답 무결성
-5. 미끼·보조 단서 일관성
-6. 핵심 추리 필수성: is_core 단서와 그 단서에 의존하는 추론을 함께 제거하면 용의자 2명 이상 남아야 함
+4. 정답 무결성: 어떤 규칙도 정답을 배제하지 않음
+5. 미끼·보조 단서 일관성: 규칙이 없는 단서는 is_core = FALSE
+6. 핵심 추리 필수성: is_core 단서마다, 그 단서와 그 단서에 의존하는 추론을 함께 제거하면 용의자 2명 이상 남아야 함. is_core 단서가 없는 사건은 실패
 
 ## 7. DB 설계 (최종 확정, 12개 테이블)
 
@@ -167,7 +182,7 @@ MySQL 8.0.16 이상, utf8mb4, InnoDB. 모든 테이블 단일 대리 PK, 연결 
 | 회원 | users | user_id PK, login_id UK, password_hash(BCrypt), nickname, role(USER/ADMIN), created_at |
 | 포켓몬 | pokemon | pokemon_id PK(전국도감 번호), name_en UK, name_ko, height_dm, weight_hg, type1, type2, color, shape, sprite_path, synced_at |
 | 포켓몬 | pokemon_trait | trait_id PK, pokemon_id FK, trait_code, description, source_type(POKEDEX/CASE_RULE), source_text, source_version, is_judgment / UK(pokemon_id, trait_code) |
-| 사건 | case_file | case_id PK, case_code UK, title, subtitle, briefing, scene_image_path, answer_pokemon_id FK→pokemon, truth_text, motive_text, twist_text, display_order, is_enabled, validated_at |
+| 사건 | case_file | case_id PK, case_code UK, title, subtitle, briefing, scene_image_path, answer_pokemon_id FK→pokemon, truth_text, motive_text, twist_text, display_order, is_enabled, validation_status(PENDING/VALID/INVALID), validated_at |
 | 사건 | case_suspect | case_suspect_id PK, case_id FK, pokemon_id FK, suspicion_text, display_order / UK(case_id, pokemon_id) |
 | 사건 | evidence_rule | rule_id PK, condition_type(7종), condition_value, basis_text(공개 판정 기준), source_type(API/POKEDEX/CASE_RULE), source_ref |
 | 사건 | clue | clue_id PK, case_id FK, clue_code, clue_kind(SCENE/INFERENCE), name, summary, detail_text, rebuttal_text, rule_id FK NULL, is_core, area_x/y/w/h, display_order / UK(case_id, clue_code) |
@@ -204,9 +219,10 @@ MySQL 8.0.16 이상, utf8mb4, InnoDB. 모든 테이블 단일 대리 PK, 연결 
 
 ### 배제 요청 처리 순서
 1. request_id 중복 확인 (처리된 요청이면 저장된 결과 반환)
-2. play_session FOR UPDATE
+2. play_session FOR UPDATE, 잠금 직후 같은 request_id를 다시 확인
 3. 세션 소유자 확인
 4. 세션 상태 IN_PROGRESS 확인
+   - 이어서 사건의 validation_status가 VALID인지 확인 (아니면 409 CASE_UNAVAILABLE, 기록 없음)
 5. 단서·용의자가 세션과 같은 사건인지 확인
 6. 단서 수집 여부, 용의자 ACTIVE 확인
 7. dedup_key 확인
@@ -214,7 +230,9 @@ MySQL 8.0.16 이상, utf8mb4, InnoDB. 모든 테이블 단일 대리 PK, 연결 
 9. 점수·session_suspect 갱신
 10. session_action 기록
 11. commit
-(3~7에서 걸리면 REJECTED, 감점 없음)
+- 3~5에서 걸리면 4xx 오류로 응답하고 session_action에 기록하지 않음
+- 6~7에서 걸리면 REJECTED로 기록, 감점 없음
+- 저장된 결과를 반환할 때도 세션 소유자를 확인하고, 저장된 행동의 세션·행동 종류·대상 ID가 요청과 같아야 함 (다르면 400)
 
 ## 8. PokéAPI 값 검증 결과 (2026-11-24 완료)
 
@@ -250,8 +268,8 @@ PokéAPI 원본 데이터 저장소(PokeAPI/api-data)에서 12마리를 확인�
 |---|---|---|
 | 11/25~11/30 | DB 설계서 제출(11/30), Spring·React·MySQL 구축, SQL 실행, 12마리 PokéAPI 값 검증(샘플 SQL·설계서 수정), REST API 명세 | DB 설계서 제출 + 백·프론트 실행 |
 | 12/1~12/3 | 회원가입·로그인·인가, 사건 목록, 세션 생성·재개 | 로그인 → 사건 시작 가능 |
-| 12/4~12/6 | CASE 3 게임 화면, 현장 조사, 증거 수첩, 용의자 파일 | CASE 3 단서 수집 가능 |
-| 12/7~12/9 | 추론 자동 생성, 7종 판정기, 배제·지목·점수·등급, 사건 검증기(세 사건 데이터 전체 대상) | CASE 3 완주 + 세 사건 검증 통과 (1차 개발 마감) |
+| 12/4~12/6 | CASE 3 게임 화면, 현장 조사, 추론 자동 생성, 증거 수첩, 용의자 파일 | CASE 3 단서 수집 가능 (추론 포함) |
+| 12/7~12/9 | 7종 판정기, 배제·지목·점수·등급, 사건 검증기(세 사건 데이터 전체 대상) | CASE 3 완주 + 세 사건 검증 통과 (1차 개발 마감) |
 | 12/10 | 마이페이지·기록 조회, CASE 3 집중 QA, 테스트 배포 | 배포 환경에서 CASE 3 완주 |
 | 12/11 | CASE 1·2 현장 이미지·클릭 좌표 적용 | 세 사건 모두 실행 가능 |
 | 12/12 | 전체 QA (회원별 저장, 재접속, 중복 요청, 점수) | 기능 동결 |
@@ -259,6 +277,6 @@ PokéAPI 원본 데이터 저장소(PokeAPI/api-data)에서 12마리를 확인�
 | 12/14 | 발표 (CASE 3 시연) | |
 
 - 현장 이미지 3장은 12/4 이후 저녁 시간에 미리 준비한다 (AI 토큰 불필요).
-- [완료 11/25] CASE 3 현장 이미지 확정: case03.webp (1920×1080, 16:9). 클릭 좌표는 02_sample.sql에 반영 (E1 0.514/0.638/0.150/0.133, E2 0.338/0.000/0.232/0.160, E3 0.167/0.887/0.063/0.085, E4 0.434/0.776/0.055/0.064, E5 0.769/0.383/0.107/0.157). 이미지 규칙: 16:9, 포켓몬·실루엣 없음, 공식 상표 문양 최소화, 게임용은 WebP
+- [완료 11/25] CASE 3 현장 이미지 확정: case03_scene.webp, 세 사건 모두 case0N_scene.webp (1920×1080, 16:9). 클릭 좌표는 02_sample.sql에 반영 (E1 0.514/0.638/0.150/0.133, E2 0.338/0.000/0.232/0.160, E3 0.167/0.887/0.063/0.085, E4 0.434/0.776/0.055/0.064, E5 0.769/0.383/0.107/0.157). 이미지 규칙: 16:9, 포켓몬·실루엣 없음, 공식 상표 문양 최소화, 게임용은 WebP
 - 사건 목록 한 줄 소개: 자정의 연구소 — 초자연 현상의 정체를 밝혀라 / 불타버린 실험실 — 화재의 시작점을 추적하라 / 들어간 발자국만 있는 창고 — 남겨진 발자국의 모순을 풀어라
 - 늦어질 때 우선순위: CASE 3 완성도 > 회원별 기록 > 배포 안정성 > CASE 1·2 > 시각적 꾸밈. 회원 기능, 배제 판정, 기록 저장은 필수.

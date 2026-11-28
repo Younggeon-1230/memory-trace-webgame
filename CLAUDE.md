@@ -2,7 +2,7 @@
 
 ## 먼저 읽을 문서
 - `docs/project_context.md` — 게임 규칙, 사건 3개, 검증기, DB 결정사항 (기준 문서)
-- `docs/api_spec.md` — REST API 명세 ([제안] 표시는 아직 검토 중)
+- `docs/api_spec.md` — REST API 명세 (v0.4에서 모두 확정)
 - `docs/01_schema.sql`, `docs/02_sample.sql` — DB 스키마와 샘플 데이터 (DB 이름 `metamong_case`)
 - 문서와 코드가 다르면 임의로 고치지 말고 먼저 알려 줄 것
 
@@ -18,7 +18,8 @@
 - 판정은 DB 정수값(height_dm, weight_hg)으로만. 표시용 m·kg 변환은 응답 DTO에서
 - 게임 중 PokéAPI를 호출하지 않는다 (DB 캐시만 사용)
 - `spring.jpa.hibernate.ddl-auto=validate` — 테이블은 SQL 파일로만 만든다. 엔티티는 스키마에 맞출 것
-- 게임 행동 처리 순서: requestId 중복 확인 → play_session `FOR UPDATE` → 소유자 → IN_PROGRESS → 같은 사건 → 수집·ACTIVE → dedup_key → 판정 → 갱신 → session_action → commit
+- 게임 행동 처리 순서: requestId 중복 확인 → play_session `FOR UPDATE` → 잠금 직후 같은 requestId 재조회 → 소유자 → IN_PROGRESS → 사건 validation_status가 VALID(아니면 409 CASE_UNAVAILABLE) → 같은 사건 → 수집·ACTIVE → dedup_key → 판정 → 갱신 → session_action → commit
+  - 첫 조회나 재조회에서 이미 있으면 새로 처리하지 않고, 세션 존재·소유자와 저장된 sessionId·행동 종류·대상 ID(clueId, caseSuspectId)가 요청과 같은지 검증한 뒤 저장된 결과를 재생한다 (다르면 400)
 - REJECTED 행은 dedup_key NULL, score_delta 0. 서버 자동 INFER는 request_id NULL
 - 비밀번호·DB 계정은 `application-local.yml`에 (gitignore 되어 있음). 커밋하지 않는다
 
