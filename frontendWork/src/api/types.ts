@@ -137,7 +137,7 @@ export type ActionLog = {
 
 export type ApiErrorCode =
   | 'VALIDATION_ERROR' | 'TARGET_NOT_IN_CASE' | 'UNAUTHORIZED' | 'FORBIDDEN' | 'NOT_SESSION_OWNER'
-  | 'NOT_FOUND' | 'LOGIN_ID_TAKEN' | 'SESSION_ENDED' | 'SESSION_IN_PROGRESS' | 'CASE_UNAVAILABLE' | 'INTERNAL_ERROR' | 'NETWORK_ERROR'
+  | 'NOT_FOUND' | 'LOGIN_ID_TAKEN' | 'SESSION_ENDED' | 'SESSION_IN_PROGRESS' | 'CASE_UNAVAILABLE' | 'INTERNAL_ERROR' | 'NETWORK_ERROR' | 'RESPONSE_UNREADABLE'
 
 export class ApiError extends Error {
   status: number
@@ -165,4 +165,14 @@ export interface GameApi {
   getMySessions(params?: { caseId?: number; page?: number; size?: number }): Promise<Page<SessionRecord>>
   getMySummary(): Promise<CaseRecordSummary[]>
   getMyActions(sessionId: number): Promise<ActionLog[]>
+}
+
+/**
+ * 서버가 요청을 처리했는지 알 수 없는 오류인지 (backend_design 6.11).
+ * 연결 실패, 5xx(프록시 502·504 포함), 본문을 읽지 못한 2xx, ApiError가 아닌 예외.
+ * 이 경우 같은 requestId로 다시 보내야 한다. 4xx는 서버가 거절을 확정한 것이므로 해당하지 않는다.
+ */
+export function isOutcomeUnknown(e: unknown): boolean {
+  if (!(e instanceof ApiError)) return true
+  return e.code === 'NETWORK_ERROR' || e.code === 'RESPONSE_UNREADABLE' || e.status === 0 || e.status >= 500
 }

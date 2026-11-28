@@ -172,6 +172,7 @@ a { color: var(--accent); }
 .feedback strong { color: var(--ink); font-size: .9rem; }
 .feedback p { margin: 6px 0 0; color: var(--muted-light); font-size: .82rem; line-height: 1.6; }
 .feedback .toast-quote { color: var(--accent); }
+.feedback-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .feedback .close-button { top: 4px; right: 8px; font-size: 1.3rem; }
 
 /* ───────── 모달 (브리핑·용의자 파일·지목) ───────── */

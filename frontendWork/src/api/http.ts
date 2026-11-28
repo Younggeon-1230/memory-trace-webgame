@@ -15,6 +15,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   if (res.status === 204) return undefined as T
   const data = await res.json().catch(() => null)
+  // 2xx인데 본문을 읽지 못하면 서버가 처리했는지 알 수 없다. 성공(null)으로 넘기지 않는다 (backend_design 6.11)
+  if (res.ok && data === null) throw new ApiError(res.status, 'RESPONSE_UNREADABLE', '서버 응답을 읽지 못했습니다.')
   if (!res.ok) {
     const fallback: ApiErrorCode = res.status === 401 ? 'UNAUTHORIZED' : res.status >= 500 ? 'INTERNAL_ERROR' : 'VALIDATION_ERROR'
     const code = (data?.code ?? fallback) as ApiErrorCode

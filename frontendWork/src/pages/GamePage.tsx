@@ -1,12 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
-import { api, ApiError, newRequestId, type ActionResponse, type Clue, type GameState, type Suspect } from '../api'
+import { api, ApiError, isOutcomeUnknown, newRequestId, type ActionResponse, type Clue, type GameState, type Suspect } from '../api'
 import Modal from '../components/Modal'
 import SceneImage from '../components/SceneImage'
 import SuspectFile from '../components/SuspectFile'
 import { caseLabel, STATUS_KO } from '../lib/labels'
 
-type Feedback = { tone: 'ok' | 'bad' | 'info'; title: string; text?: string; rebuttal?: string }
+type Feedback = { tone: 'ok' | 'bad' | 'info'; title: string; text?: string; rebuttal?: string; unknown?: boolean }
+/**
+ * 결과를 아직 확정하지 못한 행동 (backend_design 6.11).
+ * key는 행동 종류+대상. 같은 행동을 다시 보내면 같은 requestId를 쓴다.
+ */
+type Pending = {
+  key: string
+  requestId: string
+  send: (requestId: string) => Promise<ActionResponse>
+  onDone: (r: ActionResponse) => void
+}
 type Confirm = { kind: 'exclude'; clue: Clue; suspect: Suspect } | { kind: 'accuse'; suspect: Suspect }
 
 export default function GamePage() {
@@ -44,24 +54,85 @@ export default function GamePage() {
     return () => clearTimeout(t)
   }, [feedback])
 
-  const run = useCallback(async (call: () => Promise<ActionResponse>, onDone: (r: ActionResponse) => void) => {
+  const pendingRef = useRef<Pending | null>(null)
+  // 화면 표시용 (ref는 렌더링 중에 읽지 않는다)
+  const [hasPending, setHasPending] = useState(false)
+  const setPending = useCallback((p: Pending | null) => {
+    pendingRef.current = p
+    setHasPending(p !== null)
+  }, [])
+  // busy 상태가 화면에 반영되기 전의 빠른 중복 클릭을 막는 동기 가드
+  const inFlightRef = useRef(false)
+
+  const finishResponse = useCallback((r: ActionResponse, onDone: (r: ActionResponse) => void) => {
+    setState(r.state)
+    onDone(r)
+    if (r.state.status !== 'IN_PROGRESS') navigate(`/result/${id}`)
+  }, [id, navigate])
+
+  /** 결과를 모르는 행동이 있을 때 현재 상태를 서버에서 다시 받아 확인하고 pending을 지운다 */
+  const confirmByRefresh = useCallback(async () => {
+    if (inFlightRef.current) return
+    inFlightRef.current = true
     setBusy(true)
     try {
-      const r = await call()
-      setState(r.state)
-      onDone(r)
-      if (r.state.status !== 'IN_PROGRESS') navigate(`/result/${id}`)
-    } catch (e) {
-      if (e instanceof ApiError && e.code === 'CASE_UNAVAILABLE') {
-        setBlockedId(id)
-        setAccuseOpen(false)
-        setConfirm(null)
-      }
-      setFeedback({ tone: 'bad', title: '요청을 처리하지 못했습니다', text: e instanceof ApiError ? e.message : undefined })
+      const s = await api.getSession(id)
+      setPending(null)
+      setState(s)
+      setFeedback({ tone: 'info', title: '서버의 최신 상태를 반영했습니다', text: '이전 요청이 처리되었는지 화면에서 확인한 뒤 다음 행동을 하세요.' })
+      if (s.status !== 'IN_PROGRESS') navigate(`/result/${id}`)
+    } catch {
+      setFeedback({ tone: 'bad', title: '아직 서버 상태를 확인하지 못했습니다', text: '잠시 뒤 다시 시도하세요.', unknown: true })
     } finally {
+      inFlightRef.current = false
       setBusy(false)
     }
-  }, [id, navigate])
+  }, [id, navigate, setPending])
+
+  /**
+   * 행동 하나를 보낸다. 규칙 (backend_design 6.11)
+   * - 같은 행동(key)의 재시도는 pending의 requestId를 그대로 쓴다
+   * - 확정(정상 2xx 또는 4xx)되면 pending을 지운다. 결과를 모르면(연결 실패·5xx·본문 없는 2xx) 유지한다
+   * - 결과를 모르는 채로 다른 행동을 하려 하면, 보내지 않고 먼저 상태를 다시 조회한다
+   */
+  const perform = useCallback(async (key: string, send: Pending['send'], onDone: Pending['onDone']) => {
+    if (inFlightRef.current) return
+    const prev = pendingRef.current
+    if (prev && prev.key !== key) return confirmByRefresh()
+
+    const entry: Pending = prev ?? { key, requestId: newRequestId(), send, onDone }
+    setPending(entry)
+    inFlightRef.current = true
+    setBusy(true)
+    try {
+      const r = await entry.send(entry.requestId)
+      setPending(null)
+      finishResponse(r, entry.onDone)
+    } catch (e) {
+      if (isOutcomeUnknown(e)) {
+        setFeedback({
+          tone: 'bad', unknown: true, title: '결과를 확인하지 못했습니다',
+          text: '서버가 이미 처리했을 수 있습니다. [다시 보내기]는 같은 요청을 재전송하므로 두 번 처리되지 않습니다.',
+        })
+      } else {
+        setPending(null)
+        if (e instanceof ApiError && e.code === 'CASE_UNAVAILABLE') {
+          setBlockedId(id)
+          setAccuseOpen(false)
+          setConfirm(null)
+        }
+        setFeedback({ tone: 'bad', title: '요청을 처리하지 못했습니다', text: e instanceof ApiError ? e.message : undefined })
+      }
+    } finally {
+      inFlightRef.current = false
+      setBusy(false)
+    }
+  }, [id, confirmByRefresh, finishResponse, setPending])
+
+  const retryPending = () => {
+    const p = pendingRef.current
+    if (p) perform(p.key, p.send, p.onDone)
+  }
 
   const clueMap = useMemo(() => new Map(state?.clues.map((c) => [c.clueId, c]) ?? []), [state])
   const selectedClue = selectedClueId ? clueMap.get(selectedClueId) ?? null : null
@@ -74,7 +145,7 @@ export default function GamePage() {
 
   const investigate = (clueId: number) => {
     if (busy || blocked) return
-    run(() => api.investigate(id, { requestId: newRequestId(), clueId }), (r) => {
+    perform(`INV:${clueId}`, (requestId) => api.investigate(id, { requestId, clueId }), (r) => {
       if (r.result === 'REJECTED') return setFeedback({ tone: 'info', title: r.message })
       const found = r.state.clues.find((c) => c.clueId === clueId)
       const inferred = (r.inferredClueIds ?? []).map((cid) => r.state.clues.find((c) => c.clueId === cid)?.name).filter(Boolean)
@@ -94,14 +165,17 @@ export default function GamePage() {
     const c = confirm
     setConfirm(null)
     if (c.kind === 'exclude') {
-      run(() => api.exclude(id, { requestId: newRequestId(), clueId: c.clue.clueId, caseSuspectId: c.suspect.caseSuspectId }), (r) => {
+      const { clueId } = c.clue
+      const { caseSuspectId } = c.suspect
+      perform(`EXC:${clueId}:${caseSuspectId}`, (requestId) => api.exclude(id, { requestId, clueId, caseSuspectId }), (r) => {
         if (r.result === 'SUCCESS') { setSelectedClueId(null); setFeedback({ tone: 'ok', title: '배제 성공', text: r.message }) }
         else if (r.result === 'FAIL') setFeedback({ tone: 'bad', title: `배제 실패 · ${r.scoreDelta}점`, text: r.message, rebuttal: r.rebuttalText })
         else setFeedback({ tone: 'info', title: r.message })
       })
     } else {
       setAccuseOpen(false)
-      run(() => api.accuse(id, { requestId: newRequestId(), caseSuspectId: c.suspect.caseSuspectId }), (r) => {
+      const { caseSuspectId } = c.suspect
+      perform(`ACC:${caseSuspectId}`, (requestId) => api.accuse(id, { requestId, caseSuspectId }), (r) => {
         if (r.result === 'FAIL') setFeedback({ tone: 'bad', title: `지목 실패 · ${r.scoreDelta}점`, text: r.message })
         else if (r.result === 'REJECTED') setFeedback({ tone: 'info', title: r.message })
       })
@@ -196,6 +270,12 @@ export default function GamePage() {
               <strong>{feedback.title}</strong>
               {feedback.text && <p>{feedback.text}</p>}
               {feedback.rebuttal && <p className="toast-quote">{feedback.tone === 'bad' ? `오박사: “${feedback.rebuttal}”` : feedback.rebuttal}</p>}
+              {feedback.unknown && (
+                <div className="feedback-actions">
+                  {hasPending && <button type="button" className="dark-button small" onClick={retryPending} disabled={busy}>다시 보내기</button>}
+                  <button type="button" className="outline-button small" onClick={confirmByRefresh} disabled={busy}>서버 상태 확인</button>
+                </div>
+              )}
             </div>
           )}
           <p className="panel-hint">
