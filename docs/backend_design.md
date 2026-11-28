@@ -871,7 +871,7 @@ ERROR [CaseValidator] 검증 중단: 예상하지 못한 오류. 사건 상태�
 | T23 | 검증기 | 위반 / 통과(`is_enabled` TRUE·FALSE 각각) / 반영 중 쓰기 실패 | INVALID / VALID, 두 경우 모두 `is_enabled` 불변, `validated_at` 갱신 / 전체 롤백 |
 | T24 | 시작 순서 | 실제 서버를 띄우고 검증을 일부러 멈춘 상태에서 고정 포트에 접속 | 검증이 멈춘 동안 **TCP 연결과 HTTP 요청이 모두 성립하지 않음**. 검증 예외면 시작 실패 |
 | T25 | 테스트 DB 안전 | 허용 밖 DB / 허용 밖 SQL 문장 / `allowMultiQueries`가 든 URL / `NO_BACKSLASH_ESCAPES` / 공백 없는 `--` | 삭제를 포함해 **어떤 변경 문장도 실행하기 전에** 중단. URL은 연결 전에 거절. 공백 없는 `--`는 주석으로 건너뛰지 않음 |
-| T26 | 개발 DB 보호 | 테스트 계정의 `SHOW GRANTS` 전체, `metamong_case` 조회·쓰기 시도 | 허용: `USAGE ON *.*`, 정확히 테스트 DB(`_` 이스케이프) 권한. **실패:** `WITH GRANT/ADMIN OPTION`, 역할 부여, PROXY, 전역·동적 권한, 다른 DB·테이블 권한. 개발 DB 접근은 거부. 판단 규칙은 DB 없는 단위 테스트(`GrantPolicyTest`)로도 확인하고, 출력 형식은 실제 MySQL 8.0.46으로 검증 |
+| T26 | 개발 DB 보호 | 테스트 계정의 `SHOW GRANTS` 전체, `metamong_case` 조회·쓰기 시도 | 허용: `USAGE ON *.*`, 정확히 테스트 DB(`_` 이스케이프) 권한. **실패:** `WITH GRANT/ADMIN OPTION`, 역할 부여, PROXY, 전역·동적 권한, 다른 DB·테이블 권한. 개발 DB 접근은 거부. **접속·DB 확인에 성공한 뒤 대상 문장의 실행에서 난 오류만 거부로 인정**(접속 오류는 코드와 관계없이 실패). 판단 규칙은 DB 없는 단위 테스트(`GrantPolicyTest`)로도 확인하고, 출력 형식은 실제 MySQL 8.0.46으로 검증 |
 | T27 | Origin | `prod` POST: 누락, `null`, 다른 scheme·host·port, 하위 도메인, 위조한 `X-Forwarded-Host` / 허용 값 / 개발 프로필 | 허용 값만 통과. 나머지는 403 `FORBIDDEN`, 본문에 허용 Origin 없음, DB 불변. 로그인·logout 포함. 허용 목록이 비면 시작 실패. 개발 프로필은 검사 안 함 |
 | T28 | 쿠키 | `prod` 프로필 실제 서버에서 로그인 | `Set-Cookie`에 `Secure`, `HttpOnly`, `SameSite=Lax` |
 | T29 | SPA | 알 수 없는 `/api/xxx`, `/api/sessions/1/xxx` (GET·POST) / `/play/3` / 없는 이미지 | API는 JSON 404(비로그인 401)이며 HTML 아님 / `index.html` / 404 |
@@ -999,25 +999,20 @@ D1, D7, D19, D26, D28, D29는 확정되었습니다. **단계 1은 단계 0의 �
 | 0-4 | 개발 DB 생성, SQL 2개 실행 | 사건 3, 용의자 12, 단서 25건. 한글 정상 |
 | 0-5 | 엔티티 12개 + Enum + 리포지토리 | `ddl-auto=validate`로 부팅, 12개 엔티티 조회 테스트 (3.4의 위험 해소) |
 
-**진행 상황 (2026-11-28) — 단계 0은 미완료입니다**
+**진행 상황 (2026-11-28) — 단계 0: 마지막 재실행 대기**
 
-| 단계 | 상태 |
-|---|---|
-| 0-1, 0-2 | 코드와 DB 없는 확인 완료 |
-| 0-3 | 코드 완료, T25와 권한 판단 규칙 통과. **T26 실제 실행 안 함** |
-| 0-4 | **미실행** |
-| 0-5 | 코드 완료, DB 없는 보조 비교 통과. **실제 MySQL 확인 안 함** |
+완료 조건을 실제 환경(Temurin Java 17, MySQL 8.0.46)에서 확인했습니다. 그 뒤 T26의 판정 코드를 고쳤으므로(아래), `integrationTest`를 한 번 더 통과하면 단계 0을 완료로 표시합니다.
 
-단계 0 완료 조건 (모두 충족해야 완료)
+- [x] `01_schema.sql`, `02_sample.sql` 실행 — 개발 DB: 사건 3건(모두 `PENDING`), 단서 25개, 새 소개 문구의 한글 첫 글자 정상. 테스트 DB는 초기화 도구가 실행
+- [x] `application-local.yml` 작성
+- [x] 테스트 DB와 전용 계정 생성 — `SHOW GRANTS` 출력이 `GrantPolicy`의 허용 형식과 일치(`USAGE`, 이스케이프된 테스트 DB 권한의 두 줄)
+- [x] `integrationTest` 6개 통과 (T26 수정 전 코드)
+- [x] 실제 MySQL에서 12개 엔티티 조회, 타입 호환(`BOOLEAN`/`TINYINT(1)`, `DATETIME`, `CHAR(36)` 컬럼을 포함한 매핑이 `validate` 통과)
+- [x] `ddl-auto=validate` 상태의 `bootRun` 성공 (개발 DB)
+- [x] Java 17.0.21에서 `build`, `integrationTest`, `bootRun`
+- [ ] **T26 수정 후 `integrationTest` 재실행**
 
-- [ ] `01_schema.sql`, `02_sample.sql` 실행
-- [ ] `application-local.yml` 작성
-- [ ] 테스트 DB와 전용 계정 생성
-- [x] T26 연결이 다른 DB를 가리키면 아무 쿼리도 보내지 않음 (DB 없는 테스트, 2026-11-28)
-- [ ] `integrationTest` 통과 (실제 `SHOW GRANTS` 출력으로 T26 포함)
-- [ ] 실제 MySQL에서 12개 엔티티 조회 성공 (`BOOLEAN`/`TINYINT(1)`, `DATETIME`, `CHAR(36)` 호환 확인)
-- [ ] `ddl-auto=validate` 상태로 `bootRun` 성공
-- [ ] Java 17 런타임 확인: **`build`·단위 테스트는 확인함**(Temurin 17.0.21, 2026-11-28). `integrationTest`·`bootRun`은 남음
+**T26 수정:** 이전 코드는 접속 단계에서 1044·1142가 나도 개발 DB 쿼리를 보내지 않은 채 "거부됨"으로 통과할 수 있었습니다. 이제 접속·DB 확인·문장 준비의 오류는 테스트 실패이고, 대상 문장을 실행하다가 난 오류만 거부로 판정합니다. DB 없는 테스트로 확인했습니다(단위 테스트 65개 통과).
 
 비밀번호는 코드·문서·채팅에 남기지 않고 로컬 설정과 IntelliJ 실행 구성에만 입력합니다.
 
