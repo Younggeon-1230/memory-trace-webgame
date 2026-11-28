@@ -100,8 +100,8 @@ com.metamong.memorytrace
 
 | 패키지 | 클래스 |
 |---|---|
-| `common` | `SecurityConfig`, `OriginCheckFilter`(prod 전용), `OriginProperties`, `JsonAuthenticationEntryPoint`, `JsonAccessDeniedHandler`, `ClockConfig`, `JacksonConfig`(날짜 형식), `SpaWebConfig`(10장), `ErrorCode`, `ApiException`와 하위 예외(8장), `GlobalExceptionHandler`, `ErrorResponse`, `PageResponse` |
-| `auth` | `AuthController`, `AuthService`, `UserRepository`, `User`, `Role`, `UserPrincipal`, `CustomUserDetailsService`, `SignupRequest`, `LoginRequest`, `UserResponse` |
+| `common` | `SecurityConfig`, `AuthenticationBeanConfig`, `SecurityErrorWriter`, `OriginCheckFilter`(prod 전용), `OriginProperties`, `JsonAuthenticationEntryPoint`, `JsonAccessDeniedHandler`, `ClockConfig`, `JacksonConfig`(날짜 형식), `SpaWebConfig`(10장), `ErrorCode`, `ApiException`와 하위 예외(8장), `GlobalExceptionHandler`, `ErrorResponse`, `PageResponse` |
+| `auth` | `AuthController`, `AuthService`, `UserRepository`, `User`, `Role`, `UserPrincipal`, `CustomUserDetailsService`, `MaxUtf8Bytes`, `MaxUtf8BytesValidator`, `SignupRequest`, `LoginRequest`, `UserResponse` |
 | `pokemon` | `Pokemon`, `PokemonTrait`, `TraitSourceType`, `PokemonRepository`, `PokemonTraitRepository` |
 | `cases` | `CaseController`, `CaseQueryService`, `CaseSummaryResponse`, `CaseFile`, `ValidationStatus`, `CaseSuspect`, `EvidenceRule`, `Clue`, `CluePrerequisite`, `ClueKind`, `RuleSourceType`, 각 Repository, `validation/`: `CaseValidationGate`, `CaseValidationService`, `CaseValidationResultWriter`, `CaseValidator`, `CaseDefinition`(검증 입력 값 객체), `CaseDefinitionLoader`, `IntegrityChecks`, `LogicChecks`, `ValidationViolation` |
 | `judge` | `ConditionType`, `ExclusionJudge`, `HasTypeJudge`, `NotTypeJudge`, `MaxHeightJudge`, `MaxWeightJudge`, `ShapeIsJudge`, `ColorIsJudge`, `NotTraitJudge`, `JudgeRegistry`, `PokemonProfile` |
@@ -261,6 +261,8 @@ UNIQUE `uk_action_request(request_id)`, `uk_action_dedup(session_id, dedup_key)`
 
 - 요청 `LoginRequest`: `loginId`(`@NotBlank`, `@Size max 30`), `password`(`@NotBlank`, `@Size max 64`)
 - 응답 `UserResponse` + 세션 쿠키. 실패 401 `UNAUTHORIZED` "아이디 또는 비밀번호가 맞지 않습니다." (5장)
+- 아이디는 **정확히 같아야** 합니다. DB 정렬 규칙(R10)은 대소문자와 뒤 공백을 구분하지 않으므로, 조회한 뒤 문자열을 한 번 더 비교합니다(mock과 동일).
+- 가입·로그인 요청은 한 필드의 모든 검사에 같은 문구를 써서 필드 안의 결과가 같게 합니다(72바이트 문구는 64자 이하일 때만 검사). 여러 필드가 함께 틀릴 때 어느 문구가 먼저인지는 보장하지 않습니다.
 
 ### 4.3 `POST /api/auth/logout` → 204
 
@@ -811,6 +813,7 @@ ERROR [CaseValidator] 검증 중단: 예상하지 못한 오류. 사건 상태�
 | `HttpMessageNotReadableException` | 400 (깨진 JSON, 타입 불일치) |
 | `MethodArgumentTypeMismatchException` | 400 |
 | `AuthenticationException` (로그인) | 401, 아이디·비밀번호를 구분하지 않는 문구 |
+| `AuthenticationServiceException` (인증 도중의 DB 장애 등, `InternalAuthenticationServiceException` 포함) | 500 `INTERNAL_ERROR`, 로그. 로그인 실패(401)로 숨기지 않음 |
 | `NoResourceFoundException` (`/api/**`) | 404 `NOT_FOUND` |
 | 지원하지 않는 메서드·Content-Type | 405 / 415, code `VALIDATION_ERROR` |
 | 그 밖의 `Exception` (재조회에 행이 없던 무결성 예외 포함) | 500, code `INTERNAL_ERROR` `[D8]`. 스택은 로그에만, 응답에는 일반 문구 |
@@ -1033,7 +1036,9 @@ D1, D7, D19, D26, D28, D29는 확정되었습니다. **단계 1은 단계 0의 �
 | 1-4 | 세션 시작·이어하기, GameState | 201 후 200, `session_suspect` 4행, T13, T15, T32 |
 | 1-5 | 프론트 연결 | 가입 → 로그인 → 목록 → 사건 시작 → 게임 화면, 새로고침 유지 |
 
-**진행 상황 (2026-11-28):** 1-1 완료. Java 17에서 `test` 120개(T14, T29의 API 부분 포함)와 `integrationTest` 6개가 통과했습니다. T14·T29는 업무 컨트롤러가 없는 상태에서 DB 없이 접근 규칙을 확인한 것입니다. 다음은 1-2입니다.
+**진행 상황 (2026-11-28):** 1-1 완료. Java 17에서 `test` 120개(T14, T29의 API 부분 포함)와 `integrationTest` 6개가 통과했습니다. T14·T29는 업무 컨트롤러가 없는 상태에서 DB 없이 접근 규칙을 확인한 것입니다.
+
+1-2 완료. `test` 158개와 `integrationTest` 11개(인증 흐름 5개 포함)가 통과했습니다. `bootRun`(개발 DB)에서 실제 쿠키로 가입 → 로그인 → me → 로그아웃, 세션 ID 변경, 이전·로그아웃 쿠키의 401을 확인했습니다. `prod` 프로필의 쿠키(T28)와 프론트 연결(1-5)은 남아 있습니다. 다음은 1-3입니다.
 
 ### 단계 2 — 12/4~12/6: 게임 화면 연동 (CASE 3 조사 + 추론) `[D22]`
 
@@ -1071,6 +1076,11 @@ D1, D7, D19, D26, D28, D29는 확정되었습니다. **단계 1은 단계 0의 �
 - **4-2 (4-4 배포 전에 반드시 완료):** `OriginCheckFilter`, `OriginProperties`, 설정 `app.security.allowed-origins`(http 주소, 비어 있으면 `prod` 시작 실패)와 T27. CSRF 토큰은 모든 프로필에서 꺼져 있으므로 **이 필터가 없는 동안은 배포하지 않습니다.**
 - **4-2:** T28. 실제 포트로 `Set-Cookie`를 확인하며, `SESSION_COOKIE_SECURE`가 없을 때와 `true`일 때를 모두 봅니다. `application-prod.yml`의 쿠키 설정은 1-1에 넣었고, 값이 실제 쿠키에 적용되는지는 아직 확인하지 않았습니다.
 - **4-4 (리버스 프록시가 있을 때만):** `server.forward-headers-strategy=native`와 `internal-proxies` 제한(5.3). 기본값 `none`은 이미 `application.yml`에 있습니다.
+
+**1-2에서 미룬 항목** (단계 4)
+
+- 실제 DB에서 같은 아이디를 동시에 가입하는 통합 테스트. 중복은 DB의 UNIQUE 제약이 막고, 예외 처리의 두 갈래는 단위 테스트(`AuthServiceTest`)로 확인했습니다.
+- 여러 입력 필드가 함께 틀릴 때 오류 문구의 순서 고정(loginId → password → nickname). 가입 화면이 먼저 필드별로 검사합니다.
 
 ### 이후
 
