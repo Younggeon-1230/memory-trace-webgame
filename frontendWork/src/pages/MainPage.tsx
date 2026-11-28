@@ -2,9 +2,9 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 
 const previews = [
-  { code: 'CASE 01', title: '자정의 연구소', tagline: '아무도 없는 방에서 물건이 움직였다' },
-  { code: 'CASE 02', title: '불타버린 실험실', tagline: '불이 먼저였나, 정전이 먼저였나' },
-  { code: 'CASE 03', title: '들어간 발자국만 있는 창고', tagline: '나온 발자국은 어디로 갔을까' },
+  { code: 'CASE 01', title: '자정의 연구소', tagline: '초자연 현상의 정체를 밝혀라' },
+  { code: 'CASE 02', title: '불타버린 실험실', tagline: '화재의 시작점을 추적하라' },
+  { code: 'CASE 03', title: '들어간 발자국만 있는 창고', tagline: '남겨진 발자국의 모순을 풀어라' },
 ]
 
 const steps = [

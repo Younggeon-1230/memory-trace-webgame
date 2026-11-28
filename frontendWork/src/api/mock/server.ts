@@ -143,19 +143,34 @@ function log(db: Db, a: Omit<ActionRow, 'actionId' | 'createdAt'>) {
   db.actions.push({ ...a, actionId: nextId(db.actions, 'actionId'), createdAt: now() })
 }
 
-/** 행동 API 공통: requestId 확인 → 세션 확인 → 처리 → 저장 */
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+
+/** 재전송인지 확인할 때 비교하는 값: 행동 종류와 대상 ID */
+type ActionTarget = Pick<ActionRow, 'actionType' | 'clueId' | 'caseSuspectId'>
+
+/**
+ * 행동 API 공통: requestId 확인 → 세션·소유자 확인 → 처리 → 저장
+ * (서버의 행 잠금과 잠금 직후 재조회는 동시 요청이 없는 임시 서버에는 해당하지 않는다)
+ */
 async function act(
-  sessionId: number, requestId: string | undefined,
-  handle: (db: Db, s: SessionRow) => Omit<ActionResponse, 'state'>,
+  sessionId: number, rawRequestId: string | undefined, target: ActionTarget,
+  handle: (db: Db, s: SessionRow, requestId: string) => Omit<ActionResponse, 'state'>,
 ): Promise<ActionResponse> {
   await delay()
   const db = load()
-  if (!requestId) throw new ApiError(400, 'VALIDATION_ERROR', 'requestId가 필요합니다.')
-  const done = db.responses[requestId]
+  const requestId = rawRequestId?.toLowerCase()
+  if (!requestId || !UUID_V4.test(requestId)) throw new ApiError(400, 'VALIDATION_ERROR', 'requestId가 필요합니다.')
+  // 저장된 결과를 돌려주기 전에도 세션 존재·소유자를 먼저 확인한다
   const s = ownedSession(db, sessionId)
-  if (done) return { ...done, state: buildState(db, s) }
+  const prior = db.actions.find((a) => a.requestId === requestId)
+  if (prior) {
+    const same = prior.sessionId === s.sessionId && prior.actionType === target.actionType
+      && prior.clueId === target.clueId && prior.caseSuspectId === target.caseSuspectId
+    if (!same) throw new ApiError(400, 'VALIDATION_ERROR', '이미 사용된 requestId입니다.')
+    return { ...db.responses[requestId], state: buildState(db, s) }
+  }
   if (s.status !== 'IN_PROGRESS') throw new ApiError(409, 'SESSION_ENDED', '이미 종료된 수사입니다.')
-  const res = handle(db, s)
+  const res = handle(db, s, requestId)
   db.responses[requestId] = res
   save(db)
   return { ...res, state: buildState(db, s) }
@@ -186,6 +201,8 @@ export const mockApi: GameApi = {
     const db = load()
     if (!/^[a-z0-9_]{4,30}$/.test(loginId)) throw new ApiError(400, 'VALIDATION_ERROR', '아이디는 영문 소문자·숫자·_ 4~30자입니다.')
     if (password.length < 8 || password.length > 64) throw new ApiError(400, 'VALIDATION_ERROR', '비밀번호는 8~64자입니다.')
+    // BCrypt는 72바이트까지만 처리한다
+    if (new TextEncoder().encode(password).length > 72) throw new ApiError(400, 'VALIDATION_ERROR', '비밀번호가 너무 깁니다. 한글·특수 문자는 글자당 여러 바이트를 차지합니다.')
     if (nickname.trim().length < 2 || nickname.trim().length > 20) throw new ApiError(400, 'VALIDATION_ERROR', '닉네임은 2~20자입니다.')
     if (db.users.some((u) => u.loginId === loginId)) throw new ApiError(409, 'LOGIN_ID_TAKEN', '이미 사용 중인 아이디입니다.')
     const user: UserRow = { userId: nextId(db.users, 'userId'), loginId, password, nickname: nickname.trim(), role: 'USER' }
@@ -260,8 +277,8 @@ export const mockApi: GameApi = {
     return buildState(db, ownedSession(db, sessionId))
   },
 
-  investigate(sessionId, { requestId, clueId }) {
-    return act(sessionId, requestId, (db, s) => {
+  investigate(sessionId, { requestId: raw, clueId }) {
+    return act(sessionId, raw, { actionType: 'INVESTIGATE', clueId, caseSuspectId: null }, (db, s, requestId) => {
       const clue = inCase(clueId, s.caseId)
       if (clue.kind !== 'SCENE') throw new ApiError(400, 'TARGET_NOT_IN_CASE', '현장에서 조사할 수 있는 곳이 아닙니다.')
       const has = (id: number) => db.sessionClues.some((x) => x.sessionId === s.sessionId && x.clueId === id)
@@ -294,8 +311,8 @@ export const mockApi: GameApi = {
     })
   },
 
-  exclude(sessionId, { requestId, clueId, caseSuspectId }) {
-    return act(sessionId, requestId, (db, s) => {
+  exclude(sessionId, { requestId: raw, clueId, caseSuspectId }) {
+    return act(sessionId, raw, { actionType: 'EXCLUDE', clueId, caseSuspectId }, (db, s, requestId) => {
       const clue = inCase(clueId, s.caseId)
       const cs = suspectInCase(caseSuspectId, s.caseId)
       const base = { sessionId: s.sessionId, actionType: 'EXCLUDE' as const, clueId, caseSuspectId, requestId }
@@ -329,8 +346,8 @@ export const mockApi: GameApi = {
     })
   },
 
-  accuse(sessionId, { requestId, caseSuspectId }) {
-    return act(sessionId, requestId, (db, s) => {
+  accuse(sessionId, { requestId: raw, caseSuspectId }) {
+    return act(sessionId, raw, { actionType: 'ACCUSE', clueId: null, caseSuspectId }, (db, s, requestId) => {
       const cs = suspectInCase(caseSuspectId, s.caseId)
       const st = db.sessionSuspects.find((x) => x.sessionId === s.sessionId && x.caseSuspectId === caseSuspectId)!
       const base = { sessionId: s.sessionId, actionType: 'ACCUSE' as const, clueId: null, caseSuspectId, requestId }
@@ -393,6 +410,10 @@ export const mockApi: GameApi = {
     await delay()
     const db = load()
     const user = currentUser(db)
+    const intIn = (v: number, min: number, max: number) => Number.isInteger(v) && v >= min && v <= max
+    if (!intIn(page, 0, Number.MAX_SAFE_INTEGER) || !intIn(size, 1, 100) || (caseId !== undefined && !intIn(caseId, 1, Number.MAX_SAFE_INTEGER))) {
+      throw new ApiError(400, 'VALIDATION_ERROR', '조회 조건이 올바르지 않습니다.')
+    }
     const rows = db.sessions
       .filter((s) => s.userId === user.userId && (caseId === undefined || s.caseId === caseId))
       .sort((a, b) => b.sessionId - a.sessionId)
@@ -429,6 +450,8 @@ export const mockApi: GameApi = {
     await delay()
     const db = load()
     const s = ownedSession(db, sessionId)
+    // 진행 중에 열면 거절 기록으로 미수집 단서 이름이 드러날 수 있다
+    if (s.status === 'IN_PROGRESS') throw new ApiError(409, 'SESSION_IN_PROGRESS', '아직 진행 중인 수사입니다.')
     return db.actions.filter((a) => a.sessionId === s.sessionId).map((a): ActionLog => ({
       actionType: a.actionType,
       clueName: a.clueId ? clueById(a.clueId)!.name : null,

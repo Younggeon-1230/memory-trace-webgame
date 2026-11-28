@@ -7,6 +7,7 @@ function validate(f: { loginId: string; password: string; confirm: string; nickn
   const e: Record<string, string> = {}
   if (!/^[a-z0-9_]{4,30}$/.test(f.loginId)) e.loginId = '영문 소문자·숫자·_ 4~30자로 입력하세요.'
   if (f.password.length < 8 || f.password.length > 64) e.password = '비밀번호는 8~64자입니다.'
+  else if (new TextEncoder().encode(f.password).length > 72) e.password = '비밀번호가 너무 깁니다. 한글·특수 문자는 글자당 여러 바이트를 차지합니다.'
   if (f.confirm !== f.password) e.confirm = '비밀번호가 서로 다릅니다.'
   const n = f.nickname.trim().length
   if (n < 2 || n > 20) e.nickname = '닉네임은 2~20자입니다.'

@@ -16,7 +16,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (res.status === 204) return undefined as T
   const data = await res.json().catch(() => null)
   if (!res.ok) {
-    const code = (data?.code ?? (res.status === 401 ? 'UNAUTHORIZED' : 'VALIDATION_ERROR')) as ApiErrorCode
+    const fallback: ApiErrorCode = res.status === 401 ? 'UNAUTHORIZED' : res.status >= 500 ? 'INTERNAL_ERROR' : 'VALIDATION_ERROR'
+    const code = (data?.code ?? fallback) as ApiErrorCode
     throw new ApiError(res.status, code, data?.message ?? '요청을 처리하지 못했습니다.')
   }
   return data as T

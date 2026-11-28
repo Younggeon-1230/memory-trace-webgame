@@ -26,6 +26,9 @@ export default function GamePage() {
   const [feedback, setFeedback] = useState<Feedback | null>(null)
   const [newIds, setNewIds] = useState<number[]>([])
   const [busy, setBusy] = useState(false)
+  // 서버가 CASE_UNAVAILABLE로 거절한 세션. 같은 요청을 반복하지 않도록 행동을 잠근다 (새로고침하면 다시 시도)
+  const [blockedId, setBlockedId] = useState<number | null>(null)
+  const blocked = blockedId === id
 
   useEffect(() => {
     api.getSession(id).then((s) => {
@@ -49,6 +52,11 @@ export default function GamePage() {
       onDone(r)
       if (r.state.status !== 'IN_PROGRESS') navigate(`/result/${id}`)
     } catch (e) {
+      if (e instanceof ApiError && e.code === 'CASE_UNAVAILABLE') {
+        setBlockedId(id)
+        setAccuseOpen(false)
+        setConfirm(null)
+      }
       setFeedback({ tone: 'bad', title: '요청을 처리하지 못했습니다', text: e instanceof ApiError ? e.message : undefined })
     } finally {
       setBusy(false)
@@ -65,7 +73,7 @@ export default function GamePage() {
   const active = state.suspects.filter((s) => s.status === 'ACTIVE')
 
   const investigate = (clueId: number) => {
-    if (busy) return
+    if (busy || blocked) return
     run(() => api.investigate(id, { requestId: newRequestId(), clueId }), (r) => {
       if (r.result === 'REJECTED') return setFeedback({ tone: 'info', title: r.message })
       const found = r.state.clues.find((c) => c.clueId === clueId)
@@ -113,7 +121,7 @@ export default function GamePage() {
           <div><dt>점수</dt><dd>{state.score}</dd></div>
           <div><dt>남은 지목</dt><dd>{state.accusationsLeft}회</dd></div>
         </dl>
-        <button type="button" className="primary-link accuse-button" onClick={() => setAccuseOpen(true)} disabled={busy}>지목하기</button>
+        <button type="button" className="primary-link accuse-button" onClick={() => setAccuseOpen(true)} disabled={busy || blocked}>지목하기</button>
       </header>
 
       <div className="game-main">
@@ -130,7 +138,7 @@ export default function GamePage() {
                   style={{ left: `${a.x * 100}%`, top: `${a.y * 100}%`, width: `${a.w * 100}%`, height: `${a.h * 100}%` }}
                   onClick={() => (a.collected ? setSelectedClueId(a.clueId) : investigate(a.clueId))}
                   aria-label={a.collected ? `조사 완료: ${clue?.name}` : '조사하지 않은 곳'}
-                  disabled={busy}
+                  disabled={busy || (blocked && !a.collected)}
                 >
                   {a.collected && <span className="hotspot-tag">{clue?.clueCode} ✓</span>}
                 </button>
@@ -191,7 +199,7 @@ export default function GamePage() {
             </div>
           )}
           <p className="panel-hint">
-            {selectedClue ? <>선택한 증거 <b>{selectedClue.name}</b> · 아래 용의자의 <b>배제</b>를 누르세요.</> : '증거를 고른 뒤, 아래 용의자의 [배제]를 누르세요.'}
+            {blocked ? '지금은 이 사건의 수사를 진행할 수 없습니다.' : selectedClue ? <>선택한 증거 <b>{selectedClue.name}</b> · 아래 용의자의 <b>배제</b>를 누르세요.</> : '증거를 고른 뒤, 아래 용의자의 [배제]를 누르세요.'}
           </p>
           </div>
         </aside>
@@ -217,7 +225,7 @@ export default function GamePage() {
                     <button
                       type="button"
                       className="dark-button small"
-                      disabled={!selectedClue || busy}
+                      disabled={!selectedClue || busy || blocked}
                       title={selectedClue ? undefined : '먼저 증거 수첩에서 증거를 고르세요'}
                       onClick={() => selectedClue && setConfirm({ kind: 'exclude', clue: selectedClue, suspect: s })}
                     >배제</button>

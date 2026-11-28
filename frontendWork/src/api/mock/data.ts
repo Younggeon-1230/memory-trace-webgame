@@ -41,7 +41,7 @@ export const traits: Trait[] = [
 
 export const cases: CaseRow[] = [
   {
-    caseId: 1, caseCode: 'CASE01', title: '자정의 연구소', subtitle: '아무도 없는 방에서 물건이 움직였다',
+    caseId: 1, caseCode: 'CASE01', title: '자정의 연구소', subtitle: '초자연 현상의 정체를 밝혀라',
     briefing: '새벽 1시, 지하 기록보관실 경보가 울렸다. 아무도 없는데 물건들이 흩어져 있다. 그날 밤 현장에 있던 포켓몬은 변신한 메타몽뿐이다.',
     sceneImagePath: '/scenes/case01_scene.webp', answerPokemonId: 54,
     truthText: '경보음에 두통을 느낀 고라파덕 모습의 메타몽에게서 의도치 않은 힘이 터져 물건들이 튀어 나갔다.',
@@ -49,7 +49,7 @@ export const cases: CaseRow[] = [
     twistText: '녹음기에는 젊은 오박사와 그의 고라파덕이 함께 지내던 시절의 소리가 담겨 있었다.',
   },
   {
-    caseId: 2, caseCode: 'CASE02', title: '불타버린 실험실', subtitle: '불이 먼저였나, 정전이 먼저였나',
+    caseId: 2, caseCode: 'CASE02', title: '불타버린 실험실', subtitle: '화재의 시작점을 추적하라',
     briefing: '새벽 2시, 생태 관찰실에서 작은 화재가 났다. 아크 흔적, 물, 탄 자국이 뒤섞여 있다. 그날 밤 현장에 있던 포켓몬은 변신한 메타몽뿐이다.',
     sceneImagePath: '/scenes/case02_scene.webp', answerPokemonId: 155,
     truthText: '보온함 전원이 꺼지자 메타몽은 브케인으로 변신해 알을 데웠다. 전원 복구 때 아크 소리에 놀라 등의 불꽃이 솟아 단열포에 옮겨 붙었다.',
@@ -57,7 +57,7 @@ export const cases: CaseRow[] = [
     twistText: '가장 안전한 선택이 놀람 하나로 사고가 되었다. 다행히 알은 무사했다.',
   },
   {
-    caseId: 3, caseCode: 'CASE03', title: '들어간 발자국만 있는 창고', subtitle: '나온 발자국은 어디로 갔을까',
+    caseId: 3, caseCode: 'CASE03', title: '들어간 발자국만 있는 창고', subtitle: '남겨진 발자국의 모순을 풀어라',
     briefing: '새벽, 진흙 마당에 창고로 들어간 발자국만 남았다. 창고 안은 비어 있고 진화의 돌 상자만 열려 있다. 그날 밤 현장에 있던 포켓몬은 변신한 메타몽뿐이다.',
     sceneImagePath: '/scenes/case03_scene.webp', answerPokemonId: 133,
     truthText: '이브이 모습의 메타몽은 진화의 돌을 만져 본 뒤, 들어온 경로를 그대로 되짚어 나갔다.',
