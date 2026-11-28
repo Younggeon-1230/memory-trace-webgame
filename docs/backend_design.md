@@ -438,7 +438,10 @@ UNIQUE `uk_action_request(request_id)`, `uk_action_dedup(session_id, dedup_key)`
 
 #### 쿠키·CORS·프록시
 
-- **세션 쿠키:** `prod`에서 `server.servlet.session.cookie.secure=true`를 **명시**합니다. 프록시 헤더로 HTTPS를 추정하는 데 의존하지 않습니다. `HttpOnly`, `SameSite=Lax`도 함께 적용합니다. HTTPS가 필수입니다(D21의 조건).
+- **세션 쿠키:** `prod`의 `server.servlet.session.cookie.secure`는 하드코딩하지 않고 환경 변수 `SESSION_COOKIE_SECURE`로 받습니다. **기본값은 `false`**이고, HTTPS 환경이 생기면 `true`로 켭니다. 프록시 헤더로 HTTPS를 추정하는 데 의존하지 않고 이 설정값을 **명시**합니다. `HttpOnly`, `SameSite=Lax`는 값과 관계없이 적용합니다.
+  - **결정(2026-11-28, D21 일부):** 시연은 **HTTP**로 합니다. 학교 시연 환경에서 HTTPS가 안 될 가능성이 높기 때문입니다. HTTP에서 `Secure`를 켜면 쿠키가 전송되지 않아 로그인이 유지되지 않습니다.
+  - Origin 검사는 유지합니다. 허용 목록에는 `http://서버주소:8080` 같은 http 주소를 넣습니다.
+  - **한계:** HTTP에서는 비밀번호(와 세션 쿠키)가 암호화되지 않고 전송되므로, **시연용 계정에는 실제로 쓰는 비밀번호를 쓰지 않습니다.**
 - **검증:** `prod` 프로필로 실제 서버를 띄워 로그인 응답의 `Set-Cookie`를 자동 테스트(T28)하고, 배포 후 브라우저로 한 번 더 확인합니다. MockMvc는 컨테이너의 세션 쿠키를 만들지 않으므로 실제 포트로 테스트합니다.
 - **CORS를 열지 않습니다.**
 - **전달 헤더(`X-Forwarded-*`):** 기본값은 신뢰하지 않음(`server.forward-headers-strategy=none`). 리버스 프록시가 있을 때만 `native`로 바꾸고, `server.tomcat.remoteip.internal-proxies`를 **그 프록시의 IP만** 허용하도록 좁힙니다(Tomcat 기본값은 사설 대역을 넓게 신뢰하므로 그대로 두지 않음). 앱 포트는 프록시에서만 접근할 수 있게 하고(같은 서버면 `127.0.0.1` 바인딩, 아니면 방화벽), 프록시는 클라이언트가 보낸 전달 헤더를 덮어써야 합니다. 신뢰 범위의 실제 값은 배포 장소가 정해지면 적습니다(D21).
@@ -640,14 +643,14 @@ project_context의 판정 계산표, mock의 `excludes()`와 일치합니다.
 
 ### 6.11 클라이언트의 requestId 재사용 (프론트, 2026-11-28 구현)
 
-**현재 문제:** `GamePage`는 버튼을 누를 때마다 `newRequestId()`를 새로 만듭니다. 서버가 처리했는데 응답만 유실되면, 다시 누른 요청이 새 행동이 됩니다. 특히 **오답 지목이 두 번 처리되어 수사가 실패**할 수 있습니다.
+**구현 전 문제:** 당시 `GamePage`는 버튼을 누를 때마다 `newRequestId()`를 새로 만들었습니다. 서버가 처리했는데 응답만 유실되면, 다시 누른 요청이 새 행동이 됩니다. 특히 **오답 지목이 두 번 처리되어 수사가 실패**할 수 있었습니다.
 
-**규칙** (단계 2에서 공통 흐름으로 만들고, **지목을 서버에 연결하기 전에 반드시** 적용)
+**규칙** (프론트에 구현함. 실제 백엔드와의 확인은 단계 2, **지목을 서버에 연결하기 전에 반드시** 적용을 확인)
 
 - 논리적 행동 하나에 `requestId`를 한 번만 만들고, 행동 종류·대상·`requestId`를 pending으로 보관합니다.
 - 결과를 **알 수 없으면** pending을 유지하고, 재시도는 같은 `requestId`를 씁니다.
 - pending을 지우는 것은 결과가 **확정된** 경우뿐입니다: 본문을 정상으로 읽은 2xx, 또는 4xx.
-- 결과를 알 수 없는 경우: `NETWORK_ERROR`, **5xx**(프록시의 502·504는 서버가 처리한 뒤에도 날 수 있음), **2xx인데 본문을 읽지 못한 경우**. 현재 `http.ts`는 마지막 경우에 `null`을 성공으로 돌려주므로 오류로 바꿔야 합니다. (5xx와 본문 유실은 검토 의견의 "응답을 받으면 제거"보다 좁힌 것입니다. 같은 ID의 재전송은 서버가 재생하므로 안전합니다.)
+- 결과를 알 수 없는 경우: `NETWORK_ERROR`, **5xx**(프록시의 502·504는 서버가 처리한 뒤에도 날 수 있음), **2xx인데 본문을 읽지 못한 경우**. `http.ts`는 마지막 경우를 성공(`null`)으로 넘기지 않고 `RESPONSE_UNREADABLE` 오류로 처리합니다(프론트 전용 코드). (5xx와 본문 유실은 검토 의견의 "응답을 받으면 제거"보다 좁힌 것입니다. 같은 ID의 재전송은 서버가 재생하므로 안전합니다.)
 - 결과를 모르는 상태에서 사용자가 **다른 행동**을 하려면 먼저 GameState를 다시 조회해 확인한 뒤 pending을 지웁니다.
 - `busy` 상태 외에 `useRef`의 동기 가드로, 화면이 다시 그려지기 전의 빠른 중복 실행도 막습니다.
 
@@ -816,6 +819,8 @@ ERROR [CaseValidator] 검증 중단: 예상하지 못한 오류. 사건 상태�
 
 일반 `Exception` 핸들러가 Spring Security 예외와 405 같은 표준 상태를 500으로 삼키지 않게 위 항목을 따로 처리합니다. `NETWORK_ERROR`는 프론트 전용이라 서버에서 쓰지 않습니다. REJECTED는 오류가 아니라 200입니다.
 
+표에 없는 스프링 표준 4xx(필수 파라미터 누락 등)는 원래 상태 코드를 유지하고 code는 `VALIDATION_ERROR`(404는 `NOT_FOUND`)로 보냅니다. 컨트롤러에서 난 `AccessDeniedException`은 다시 던져 Security가 처리합니다(비로그인 401, 로그인 403).
+
 ---
 
 ## 9. 테스트 계획
@@ -875,7 +880,7 @@ ERROR [CaseValidator] 검증 중단: 예상하지 못한 오류. 사건 상태�
 | T25 | 테스트 DB 안전 | 허용 밖 DB / 허용 밖 SQL 문장 / `allowMultiQueries`가 든 URL / `NO_BACKSLASH_ESCAPES` / 공백 없는 `--` | 삭제를 포함해 **어떤 변경 문장도 실행하기 전에** 중단. URL은 연결 전에 거절. 공백 없는 `--`는 주석으로 건너뛰지 않음 |
 | T26 | 개발 DB 보호 | 테스트 계정의 `SHOW GRANTS` 전체, `metamong_case` 조회·쓰기 시도 | 허용: `USAGE ON *.*`, 정확히 테스트 DB(`_` 이스케이프) 권한. **실패:** `WITH GRANT/ADMIN OPTION`, 역할 부여, PROXY, 전역·동적 권한, 다른 DB·테이블 권한. 개발 DB 접근은 거부. **접속·DB 확인에 성공한 뒤 대상 문장의 실행에서 난 오류만 거부로 인정**(접속 오류는 코드와 관계없이 실패). 판단 규칙은 DB 없는 단위 테스트(`GrantPolicyTest`)로도 확인하고, 출력 형식은 실제 MySQL 8.0.46으로 검증 |
 | T27 | Origin | `prod` POST: 누락, `null`, 다른 scheme·host·port, 하위 도메인, 위조한 `X-Forwarded-Host` / 허용 값 / 개발 프로필 | 허용 값만 통과. 나머지는 403 `FORBIDDEN`, 본문에 허용 Origin 없음, DB 불변. 로그인·logout 포함. 허용 목록이 비면 시작 실패. 개발 프로필은 검사 안 함 |
-| T28 | 쿠키 | `prod` 프로필 실제 서버에서 로그인 | `Set-Cookie`에 `Secure`, `HttpOnly`, `SameSite=Lax` |
+| T28 | 쿠키 | `prod` 프로필 실제 서버에서 로그인 | `Set-Cookie`에 `HttpOnly`, `SameSite=Lax`. `Secure`는 기본(`false`)이면 없고, `SESSION_COOKIE_SECURE=true`면 있음 |
 | T29 | SPA | 알 수 없는 `/api/xxx`, `/api/sessions/1/xxx` (GET·POST) / `/play/3` / 없는 이미지 | API는 JSON 404(비로그인 401)이며 HTML 아님 / `index.html` / 404 |
 | T30 | 산출물 | jar 항목 검사, 개발 실행 | jar에 `application-local.yml`·`.properties` 없음 / `processResources` 결과에는 남아 `bootRun` 가능 |
 | T31 | 산출물 | `-PwithFrontend`로 빌드한 JS 검사 | mock 표식 문자열 없음 (10.3) |
@@ -965,8 +970,8 @@ React 라우트: `/`, `/login`, `/signup`, `/cases`, `/play/{id}`, `/result/{id}
 
 ### 10.5 실행 환경
 
-- `prod` 프로필: DB 접속 정보와 허용 Origin은 환경 변수, `Secure` 쿠키 고정, 전달 헤더는 5.3 규칙.
-- **HTTPS가 전제**입니다. HTTP로 배포하면 `Secure` 쿠키가 전송되지 않아 로그인이 유지되지 않습니다.
+- `prod` 프로필: DB 접속 정보와 허용 Origin은 환경 변수, 쿠키 `Secure`는 `SESSION_COOKIE_SECURE`(기본 `false`), 전달 헤더는 5.3 규칙.
+- **시연은 HTTP**입니다(D21 일부 결정, 이유와 한계는 5.3). HTTP에서는 `Secure`를 `false`로 둡니다. HTTPS로 배포할 때만 `true`로 켭니다.
 - 배포 DB에도 SQL 파일을 직접 실행합니다.
 - 서버는 1대로 둡니다(메모리 세션).
 - 배포 장소 `[D21 보류]`: 학교 제공 서버가 있는지 확인하고, 없으면 클라우드 VM을 씁니다.
@@ -1028,6 +1033,8 @@ D1, D7, D19, D26, D28, D29는 확정되었습니다. **단계 1은 단계 0의 �
 | 1-4 | 세션 시작·이어하기, GameState | 201 후 200, `session_suspect` 4행, T13, T15, T32 |
 | 1-5 | 프론트 연결 | 가입 → 로그인 → 목록 → 사건 시작 → 게임 화면, 새로고침 유지 |
 
+**진행 상황 (2026-11-28):** 1-1 완료. Java 17에서 `test` 120개(T14, T29의 API 부분 포함)와 `integrationTest` 6개가 통과했습니다. T14·T29는 업무 컨트롤러가 없는 상태에서 DB 없이 접근 규칙을 확인한 것입니다. 다음은 1-2입니다.
+
 ### 단계 2 — 12/4~12/6: 게임 화면 연동 (CASE 3 조사 + 추론) `[D22]`
 
 각 테스트는 이 시점에 있는 API(조사)에 해당하는 시나리오만 통과시키고, 배제·지목 시나리오는 3-3, 3-4에서 마저 통과시킵니다.
@@ -1037,7 +1044,7 @@ D1, D7, D19, D26, D28, D29는 확정되었습니다. **단계 1은 단계 0의 �
 | 2-1 | 행동 공통 흐름 (`ActionGuard`, 잠금, 2-1 재조회, 4-1), 조사 API | T7, T9, T10, T33-a(조사) |
 | 2-2 | 추론 자동 생성 | T2의 추론 연쇄, CASE 3 I1 |
 | 2-3 | 재생 빈과 Facade | T3, T5, T8, T17, T18, T19, T20, T21의 조사 시나리오 |
-| 2-4 | 프론트의 requestId 재사용 공통 흐름 (6.11, `GamePage`·`http.ts`) | T34(조사) |
+| 2-4 | 프론트의 requestId 재사용 확인 (6.11. **프론트 구현 완료** 2026-11-28, 남은 일은 실제 백엔드 확인) | 실제 백엔드로 T34(조사) |
 | 2-5 | 프론트 연결 | CASE 3 현장 5곳 수집, I1 생성, 수첩·용의자 파일 표시 |
 
 ### 단계 3 — 12/7~12/9: 판정·검증기 (1차 개발 마감)
@@ -1057,7 +1064,13 @@ D1, D7, D19, D26, D28, D29는 확정되었습니다. **단계 1은 단계 0의 �
 | 4-1 | `/api/me/*` 3개 | 요약·목록·타임라인, 계정 2개로 서로 안 보임, 진행 중 타임라인 409, 페이지 크기 검증, T33-c |
 | 4-2 | 운영 보안 설정 (`prod` Origin 검사, 쿠키) | T27, T28 |
 | 4-3 | 빌드 통합, SPA 처리 | T29~T31 |
-| 4-4 | 배포 | HTTPS에서 쿠키 속성, `/play/{id}` 새로고침, `/api` 실호출, CASE 3 완주 |
+| 4-4 | 배포 | HTTP에서 쿠키 속성(`Secure` 없음)과 로그인 유지, `/play/{id}` 새로고침, `/api` 실호출, CASE 3 완주 |
+
+**1-1에서 미룬 항목**
+
+- **4-2 (4-4 배포 전에 반드시 완료):** `OriginCheckFilter`, `OriginProperties`, 설정 `app.security.allowed-origins`(http 주소, 비어 있으면 `prod` 시작 실패)와 T27. CSRF 토큰은 모든 프로필에서 꺼져 있으므로 **이 필터가 없는 동안은 배포하지 않습니다.**
+- **4-2:** T28. 실제 포트로 `Set-Cookie`를 확인하며, `SESSION_COOKIE_SECURE`가 없을 때와 `true`일 때를 모두 봅니다. `application-prod.yml`의 쿠키 설정은 1-1에 넣었고, 값이 실제 쿠키에 적용되는지는 아직 확인하지 않았습니다.
+- **4-4 (리버스 프록시가 있을 때만):** `server.forward-headers-strategy=native`와 `internal-proxies` 제한(5.3). 기본값 `none`은 이미 `application.yml`에 있습니다.
 
 ### 이후
 
@@ -1071,7 +1084,7 @@ D1, D7, D19, D26, D28, D29는 확정되었습니다. **단계 1은 단계 0의 �
 
 | # | 정할 것 | 선택지 | 기한 |
 |---|---|---|---|
-| **D21** (보류) | 배포 장소 (HTTPS 필요, 프록시가 있으면 신뢰 IP 확정) | 학교 제공 서버 유무 확인 대기. **없으면 클라우드 VM**(결정됨) | 12/10 전 |
+| **D21** (일부 보류) | HTTP 시연 확정, 장소는 미정 (장소가 정해지면 허용 Origin 주소 확정, 프록시가 있으면 신뢰 IP 확정) | 학교 제공 서버 유무 확인 대기. **없으면 클라우드 VM**(결정됨) | 12/10 전 |
 
 ### 12.2 확정 (2026-11-28)
 
@@ -1099,6 +1112,7 @@ D1, D7, D19, D26, D28, D29는 확정되었습니다. **단계 1은 단계 0의 �
 | D18 | `page` 0 이상, `size` 1~100 | api_spec, mock |
 | D19 | 로컬 MySQL `metamong_case_test` + 전용 계정, 통합 테스트는 별도 태스크 | 9.4 |
 | D20 | 시연 계정은 가입 API로 생성 | 10.5 |
+| D21 (일부) | **HTTP 시연 확정, 장소는 미정.** 이유: 학교 시연 환경에서 HTTPS가 안 될 가능성이 높음. 쿠키 `Secure`는 `SESSION_COOKIE_SECURE`(기본 `false`), `HttpOnly`·`SameSite=Lax`·Origin 검사는 유지 | 5.3, 9.3(T28), 10.5, 11장 |
 | D22 | 추론 자동 생성은 12/4~6 | project_context 9장 |
 | D23 | 사건 한 줄 소개는 project_context 문구 | `02_sample.sql`, mock, `MainPage` |
 | D24 | 현장 이미지 이름은 `case0N_scene.webp` | project_context 9장 |
