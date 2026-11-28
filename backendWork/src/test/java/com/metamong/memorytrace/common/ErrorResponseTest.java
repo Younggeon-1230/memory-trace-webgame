@@ -42,6 +42,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.InternalAuthenticationServiceException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -73,6 +74,7 @@ class ErrorResponseTest {
             Map.entry("custom-message", () -> new InvalidRequestException("이미 사용된 requestId입니다.")),
             Map.entry("constraint", () -> new ConstraintViolationException(SECRET, Set.of())),
             Map.entry("authentication", () -> new BadCredentialsException(SECRET)),
+            Map.entry("authentication-service", () -> new InternalAuthenticationServiceException(SECRET)),
             Map.entry("access-denied", () -> new AccessDeniedException(SECRET)),
             Map.entry("integrity", () -> new DataIntegrityViolationException(SECRET)),
             Map.entry("unexpected", () -> new IllegalStateException(SECRET)));
@@ -97,6 +99,9 @@ class ErrorResponseTest {
                 Arguments.of("authentication", 401, "UNAUTHORIZED", "아이디 또는 비밀번호가 맞지 않습니다."),
                 // 로그인 상태의 접근 거부는 JsonAccessDeniedHandler가 응답한다
                 Arguments.of("access-denied", 403, "FORBIDDEN", "허용되지 않은 요청입니다."),
+                // 인증 도중의 서버 장애는 로그인 실패(401)로 숨기지 않는다
+                Arguments.of("authentication-service", 500, "INTERNAL_ERROR",
+                        "서버에서 오류가 발생했습니다. 잠시 뒤 다시 시도해 주세요."),
                 Arguments.of("integrity", 500, "INTERNAL_ERROR", "서버에서 오류가 발생했습니다. 잠시 뒤 다시 시도해 주세요."),
                 Arguments.of("unexpected", 500, "INTERNAL_ERROR", "서버에서 오류가 발생했습니다. 잠시 뒤 다시 시도해 주세요."));
     }

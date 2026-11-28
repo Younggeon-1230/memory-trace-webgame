@@ -27,7 +27,7 @@ import org.springframework.test.web.servlet.MvcResult;
  * 접근 규칙 (docs/backend_design.md 5.2, 8장). DB 없이 실행한다.
  * T14: 비로그인의 보호 API는 401 JSON. T29(API 부분): 없는 /api 경로는 JSON 404, 비로그인이면 401.
  */
-@WebMvcTest
+@WebMvcTest(controllers = ApiAccessRuleTest.NoController.class)
 @Import({SecurityConfig.class, SecurityErrorWriter.class,
         JsonAuthenticationEntryPoint.class, JsonAccessDeniedHandler.class})
 class ApiAccessRuleTest {
@@ -37,10 +37,14 @@ class ApiAccessRuleTest {
     private static final String NOT_FOUND_BODY = """
             {"code":"NOT_FOUND","message":"요청한 정보를 찾을 수 없습니다."}""";
 
+    /** 업무 컨트롤러를 띄우지 않고 접근 규칙만 확인하기 위한 표시용 타입 */
+    static class NoController {
+    }
+
     @Autowired
     private MockMvc mockMvc;
 
-    /** T14. api_spec의 로그인 필요 API 전부. 컨트롤러가 생기기 전에는 접근 규칙만 확인한다. */
+    /** T14. api_spec의 로그인 필요 API 전부. 업무 컨트롤러 없이 접근 규칙만 확인한다. */
     @ParameterizedTest(name = "{0} {1}")
     @CsvSource({
             "GET,  /api/auth/me",

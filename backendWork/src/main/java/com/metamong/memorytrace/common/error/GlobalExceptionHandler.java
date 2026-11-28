@@ -10,6 +10,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -51,6 +52,15 @@ public class GlobalExceptionHandler {
         return respond(HttpStatus.BAD_REQUEST, ErrorResponse.of(ErrorCode.VALIDATION_ERROR));
     }
 
+    /**
+     * 인증하는 도중의 서버 장애(DB 오류 등). 인증 예외의 하위 타입이지만 로그인 실패가 아니므로
+     * 401로 바꾸지 않고 500으로 보내며 로그를 남긴다.
+     */
+    @ExceptionHandler(AuthenticationServiceException.class)
+    public ResponseEntity<ErrorResponse> handleAuthenticationFailure(AuthenticationServiceException e) {
+        return internalError(e);
+    }
+
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<ErrorResponse> handleAuthentication() {
         return respond(HttpStatus.UNAUTHORIZED,
@@ -73,6 +83,10 @@ public class GlobalExceptionHandler {
                 && standard.getStatusCode().is4xxClientError()) {
             return respond(standard.getStatusCode(), standard.getHeaders(), forStandard(standard.getStatusCode()));
         }
+        return internalError(e);
+    }
+
+    private ResponseEntity<ErrorResponse> internalError(Exception e) {
         log.error("예상하지 못한 오류", e);
         return respond(HttpStatus.INTERNAL_SERVER_ERROR, ErrorResponse.of(ErrorCode.INTERNAL_ERROR));
     }

@@ -45,4 +45,15 @@ public class User {
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    /** 가입한 회원. 역할은 USER로만 만들며, DB 기본값에 맡기지 않고 모든 값을 채운다. */
+    public static User signUp(String loginId, String passwordHash, String nickname, LocalDateTime createdAt) {
+        User user = new User();
+        user.loginId = loginId;
+        user.passwordHash = passwordHash;
+        user.nickname = nickname;
+        user.role = Role.USER;
+        user.createdAt = createdAt;
+        return user;
+    }
 }
