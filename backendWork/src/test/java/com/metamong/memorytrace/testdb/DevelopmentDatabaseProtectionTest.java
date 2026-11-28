@@ -1,11 +1,11 @@
 package com.metamong.memorytrace.testdb;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -41,12 +41,11 @@ class DevelopmentDatabaseProtectionTest {
             "UPDATE metamong_case.users SET nickname = nickname WHERE 1 = 0",
     })
     @DisplayName("테스트 계정은 개발 DB에 접근하면 거부된다")
-    void cannotTouchDevelopmentDatabase(String sql) {
-        DevelopmentDatabaseProbe probe = probe();
+    void cannotTouchDevelopmentDatabase(String sql) throws SQLException {
+        // 접속이나 DB 확인에 실패하면 여기서 예외가 나서 테스트가 실패한다
+        Optional<SQLException> error = probe().executionError(sql);
 
-        SQLException denied = catchThrowableOfType(SQLException.class, () -> probe.execute(sql));
-
-        assertThat((Throwable) denied).as("거부되어야 합니다: %s", sql).isNotNull();
-        assertThat(denied.getErrorCode()).isIn(ACCESS_DENIED);
+        assertThat(error).as("거부되어야 합니다: %s", sql).isPresent();
+        assertThat(error.orElseThrow().getErrorCode()).isIn(ACCESS_DENIED);
     }
 }

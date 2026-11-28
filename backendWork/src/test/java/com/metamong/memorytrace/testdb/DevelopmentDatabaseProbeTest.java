@@ -14,10 +14,12 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /** T26의 연결이 다른 DB를 가리킬 때를 DB 없이 확인한다. 서버로 나간 모든 문장을 기록한다. */
 class DevelopmentDatabaseProbeTest {
@@ -59,9 +61,9 @@ class DevelopmentDatabaseProbeTest {
         DevelopmentDatabaseProbe probe = probe(selected, catalog);
 
         assertThatThrownBy(probe::readGrants).isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(() -> probe.execute("SELECT * FROM metamong_case.users LIMIT 1"))
+        assertThatThrownBy(() -> probe.executionError("SELECT * FROM metamong_case.users LIMIT 1"))
                 .isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(() -> probe.execute("UPDATE metamong_case.users SET nickname = nickname WHERE 1 = 0"))
+        assertThatThrownBy(() -> probe.executionError("UPDATE metamong_case.users SET nickname = nickname WHERE 1 = 0"))
                 .isInstanceOf(IllegalStateException.class);
 
         // 서버로 간 것은 확인용 쿼리뿐이다
@@ -76,9 +78,49 @@ class DevelopmentDatabaseProbeTest {
         DevelopmentDatabaseProbe probe = probe("metamong_case_test", "metamong_case_test");
 
         probe.readGrants();
-        probe.execute("SELECT 1");
+        Optional<SQLException> error = probe.executionError("SELECT 1");
 
+        assertThat(error).as("성공한 문장은 오류가 없다").isEmpty();
         assertThat(sent).containsExactly(
                 "SELECT DATABASE()", "SHOW GRANTS FOR CURRENT_USER()", "SELECT DATABASE()", "SELECT 1");
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {1044, 1142, 1045})
+    @DisplayName("접속 단계의 오류는 코드가 1044·1142여도 '거부됨'으로 돌려주지 않고 던진다")
+    void connectionErrorIsNotDenial(int errorCode) {
+        SQLException connectFailure = new SQLException("connect failed", "42000", errorCode);
+        DevelopmentDatabaseProbe probe = new DevelopmentDatabaseProbe(() -> {
+            throw connectFailure;
+        });
+
+        assertThatThrownBy(() -> probe.executionError("SELECT * FROM metamong_case.users LIMIT 1"))
+                .isSameAs(connectFailure);
+    }
+
+    @Test
+    @DisplayName("DB 확인이나 문장 준비 단계의 오류도 던지며, 대상 문장은 보내지 않는다")
+    void errorBeforeStatementIsNotDenial() throws SQLException {
+        SQLException failure = new SQLException("denied early", "42000", 1142);
+
+        DevelopmentDatabaseProbe duringVerify = probe("metamong_case_test", "metamong_case_test");
+        when(connection.getCatalog()).thenThrow(failure);
+        assertThatThrownBy(() -> duringVerify.executionError("SELECT 1")).isSameAs(failure);
+
+        DevelopmentDatabaseProbe duringPrepare = probe("metamong_case_test", "metamong_case_test");
+        when(connection.createStatement()).thenReturn(statement).thenThrow(failure);
+        assertThatThrownBy(() -> duringPrepare.executionError("SELECT 1")).isSameAs(failure);
+
+        assertThat(sent).doesNotContain("SELECT 1");
+    }
+
+    @Test
+    @DisplayName("확인을 통과한 뒤 대상 문장의 실행이 거부되면 그 오류를 돌려준다")
+    void returnsErrorFromStatementItself() throws SQLException {
+        DevelopmentDatabaseProbe probe = probe("metamong_case_test", "metamong_case_test");
+        SQLException denied = new SQLException("SELECT command denied", "42000", 1142);
+        when(statement.execute(anyString())).thenThrow(denied);
+
+        assertThat(probe.executionError("SELECT * FROM metamong_case.users LIMIT 1")).containsSame(denied);
     }
 }
