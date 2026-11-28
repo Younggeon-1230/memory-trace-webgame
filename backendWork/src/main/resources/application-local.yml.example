@@ -1,0 +1,7 @@
+# 이 파일을 application-local.yml 로 복사한 뒤 본인 값으로 바꾼다.
+# application-local.yml 은 .gitignore 대상이며 bootJar 에도 들어가지 않는다.
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/metamong_case?characterEncoding=UTF-8&connectionTimeZone=Asia/Seoul
+    username: 사용자_이름
+    password: 비밀번호

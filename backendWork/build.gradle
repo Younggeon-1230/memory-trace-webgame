@@ -1,0 +1,141 @@
+import java.util.zip.ZipFile
+
+plugins {
+    id 'java'
+    // 3.5 계열의 마지막 OSS 릴리스로 고정 (docs/backend_design.md D1)
+    id 'org.springframework.boot' version '3.5.16'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.metamong'
+version = '0.0.1-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    runtimeOnly 'com.mysql:mysql-connector-j'
+
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+    testCompileOnly 'org.projectlombok:lombok'
+    testAnnotationProcessor 'org.projectlombok:lombok'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.security:spring-security-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// 더 높은 JDK로 빌드해도 Java 17에서 실행되게 한다
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17
+    options.encoding = 'UTF-8'
+}
+
+// ───── 테스트 분리 ─────
+// test            : DB 없이 항상 실행되는 단위 테스트. build·check에 연결된다
+// integrationTest : 로컬 MySQL(metamong_case_test)이 필요한 테스트. 직접 실행한다
+tasks.named('test') {
+    useJUnitPlatform {
+        excludeTags 'integration'
+    }
+}
+
+tasks.register('integrationTest', Test) {
+    description = 'MySQL이 필요한 통합 테스트를 실행합니다.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform {
+        includeTags 'integration'
+    }
+    shouldRunAfter 'test'
+    // DB 상태는 Gradle이 알 수 없으므로 매번 실행한다
+    outputs.upToDateWhen { false }
+}
+
+tasks.withType(Test).configureEach {
+    // 상대 경로 ../docs 의 SQL 파일을 읽는 테스트가 있다
+    workingDir = projectDir
+    testLogging {
+        events 'failed', 'skipped'
+        exceptionFormat = 'full'
+    }
+}
+
+// ───── 비밀 파일 차단 ─────
+// 최종 산출물에서만 제외한다. processResources에서 빼면 bootRun이 설정을 읽지 못한다
+def secretFilePatterns = [
+        '**/application-local.yml', '**/application-local.yaml', '**/application-local.properties',
+        '**/application-local-*.yml', '**/application-local-*.yaml', '**/application-local-*.properties',
+        '**/application-secret.yml', '**/application-secret.yaml', '**/application-secret.properties',
+]
+
+// bootJar에 넣어도 되는 설정·리소스 파일(BOOT-INF/classes 기준). 새 파일이 필요하면 여기에 추가한다
+def allowedResources = ['application.yml', 'application-local.yml.example']
+// 파일이 여럿인 폴더. 이 안에서도 아래의 민감한 이름은 허용하지 않는다
+def allowedResourceFolders = ['static/', 'META-INF/']
+
+tasks.named('bootJar') {
+    exclude secretFilePatterns
+    finalizedBy 'verifyBootJar'
+}
+
+// 같은 파일이 들어갈 수 있는 -plain.jar는 만들지 않는다
+tasks.named('jar') {
+    enabled = false
+}
+
+// 제외 설정을 믿지 않고, 만들어진 jar를 직접 검사한다.
+// ① BOOT-INF/classes의 클래스가 아닌 파일은 허용 목록에 있어야 한다
+// ② 허용 폴더 안에서도 비밀 파일 이름은 거절한다
+// ③ 허용한 설정 파일에 password·secret·token 값을 직접 적으면 거절한다 (${환경_변수} 참조는 허용)
+tasks.register('verifyBootJar') {
+    description = 'bootJar 산출물에 비밀 설정 파일이나 비밀 값이 없는지 검사합니다.'
+    group = 'verification'
+    dependsOn 'bootJar'
+    def jarFile = tasks.named('bootJar').flatMap { it.archiveFile }
+    inputs.file jarFile
+    inputs.property 'allowedResources', allowedResources + allowedResourceFolders
+    doLast {
+        def prefix = 'BOOT-INF/classes/'
+        def sensitiveName = ~/(?i)^(\.env.*|.*secret.*|application-local(-[^.]*)?\.(yml|yaml|properties))$/
+        def literalSecret = ~/(?i)^\s*(?!#)[\w.\-]*(password|secret|token)[\w.\-]*\s*[:=]\s*(?!\$\{)\S.*$/
+        def problems = []
+        new ZipFile(jarFile.get().asFile).withCloseable { zip ->
+            zip.entries().toList()
+                    .findAll { !it.directory && it.name.startsWith(prefix) && !it.name.endsWith('.class') }
+                    .each { entry ->
+                        def path = entry.name.substring(prefix.length())
+                        def fileName = path.tokenize('/').last()
+                        def listed = path in allowedResources
+                        if (fileName ==~ sensitiveName) {
+                            problems << "비밀 파일 이름: ${path}"
+                        } else if (!listed && !allowedResourceFolders.any { path.startsWith(it) }) {
+                            problems << "허용 목록에 없는 파일: ${path}"
+                        } else if (listed && !path.endsWith('.example')) {
+                            zip.getInputStream(entry).getText('UTF-8').readLines().eachWithIndex { text, index ->
+                                // 값은 출력하지 않고 위치만 알린다
+                                if (text ==~ literalSecret) {
+                                    problems << "비밀 값이 직접 적힌 줄: ${path}:${index + 1}"
+                                }
+                            }
+                        }
+                    }
+        }
+        if (!problems.isEmpty()) {
+            throw new GradleException("bootJar 검사 실패:\n  " + problems.join('\n  '))
+        }
+    }
+}
