@@ -3,7 +3,7 @@
 Spring Boot 3.5.16 · Java 17(컴파일 대상) · Gradle 9.9.3(wrapper) · MySQL 8.0.16 이상
 설계는 [`../docs/backend_design.md`](../docs/backend_design.md)를 따릅니다.
 
-> 현재 구현: 11장 **단계 0**(뼈대). API는 아직 없습니다.
+> 현재 구현: 11장 **단계 0**(뼈대) 완료. API는 아직 없습니다.
 
 ## 1. JDK
 
